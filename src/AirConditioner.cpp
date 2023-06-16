@@ -40,9 +40,9 @@ AirConditioner::AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin
 
 void AirConditioner::toggleFan(bool on) {
     if (on) {
-        digitalWrite(fanTurnOnPin, HIGH);
-    } else {
         digitalWrite(fanTurnOnPin, LOW);
+    } else {
+        digitalWrite(fanTurnOnPin, HIGH);
     }
 }
 
