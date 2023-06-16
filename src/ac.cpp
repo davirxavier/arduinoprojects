@@ -2,13 +2,15 @@
 #include "4display.h"
 #include "IRremote.h"
 #include "AirConditioner.h"
+#include "Thermistor.h"
 
 #define MAX_TEMP 30
 #define MIN_TEMP 18
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
 #define SWITCH_TIMEOUT_MINUTES 8
-#define TEMP_CHECK_INTERVAL_SECONDS 5
+#define TEMP_CHECK_INTERVAL_SECONDS 1
+#define TEMP_AVERAGE_PERIOD_SECONDS 15
 #define POWER_TIMEOUT_SECONDS 15
 
 #define RECV_PIN A3
@@ -17,6 +19,8 @@
 #define DEFROST_SENSOR A0
 #define TEMP_SENSOR A1
 #define BEEPER A2
+
+#define TEMP_SENSOR_OFFSET 9.08
 
 #define COMMAND_POWER 67
 #define COMMAND_MINUS 7
@@ -37,12 +41,13 @@ unsigned long powerTimeout;
 unsigned long tempCheckTimer;
 uint8_t userTemp;
 AirConditioner ac(MAIN_RELAY_PIN, FAN_RELAY_PIN);
+Thermistor tempSensor(TEMP_SENSOR);
+double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
+uint8_t currentTempOverPeriod;
 
 bool beepActivated;
 bool isBeeping;
 unsigned long beepTimeout;
-
-double testTemp = 30;
 
 bool isOn;
 
@@ -66,6 +71,7 @@ void setup() {
     ac.switchTimeoutMinutes = SWITCH_TIMEOUT_MINUTES;
     hasPowerTimeout = false;
     powerTimeout = 0;
+    currentTempOverPeriod = 0;
 
     remote.enableIRIn();
     remoteTimeout = 0;
@@ -78,9 +84,6 @@ void setup() {
     pinMode(FAN_RELAY_PIN, OUTPUT);
 
     pinMode(BEEPER, OUTPUT);
-
-    pinMode(DEFROST_SENSOR, INPUT);
-    pinMode(TEMP_SENSOR, INPUT);
 
     analogWrite(BEEPER, 0);
     startBeep();
@@ -138,15 +141,6 @@ void loop() {
             default: ;
         }
 
-        if (remote.decodedIRData.command == 68) { // TODO REMOVE
-            testTemp--;
-            commandRead = true;
-        }
-        if (remote.decodedIRData.command == 64) { // TODO REMOVE
-            commandRead = true;
-            testTemp++;
-        }
-
         if (commandRead) {
             remoteTimeout = millis();
             startBeep();
@@ -156,7 +150,19 @@ void loop() {
 
     if (isOn) {
         if (millis()-tempCheckTimer > TEMP_CHECK_INTERVAL_SECONDS*1000) {
-            ac.doChecks(readTemp(), readCoilTemp());
+            if (currentTempOverPeriod == TEMP_AVERAGE_PERIOD_SECONDS) {
+                double tempAvg = 0;
+                for (double temp : tempsOverPeriod) {
+                    tempAvg = tempAvg + temp;
+                }
+                tempAvg = tempAvg / TEMP_AVERAGE_PERIOD_SECONDS;
+
+                ac.doChecks(tempAvg, readCoilTemp());
+                currentTempOverPeriod = 0;
+            }
+
+            tempsOverPeriod[currentTempOverPeriod] = readTemp();
+            currentTempOverPeriod++;
             tempCheckTimer = millis();
         }
 
@@ -179,8 +185,6 @@ void setUserTemp(uint8_t temp) {
 void updateDisplay() {
     display.write1(2, (userTemp/10)%10, false);
     display.write1(3, userTemp % 10, false);
-
-    display.write1(0, (int)testTemp % 10, false);
 }
 
 void turn() {
@@ -204,7 +208,7 @@ void startBeep() {
 }
 
 double readTemp() {
-    return testTemp; // TODO do
+    return tempSensor.getTemp() + TEMP_SENSOR_OFFSET;
 }
 
 double readCoilTemp() {

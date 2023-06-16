@@ -17,13 +17,18 @@ public:
     uint8_t fanTurnOnPin;
     uint8_t userTemperature;
     uint8_t switchTimeoutMinutes;
+    uint8_t tempCheckIntervalMinutes;
     double temperatureUpperLimit;
     double temperatureLowerLimit;
 
 protected:
+    bool isOn;
+    bool isCompressorRunning;
+    unsigned long lastTempCheckMillis;
     unsigned long switchTimeoutMillis;
-    void toggleCompressor(bool on) const;
-    void toggleFan(bool on) const;
+    double lastTemp;
+    void toggleCompressor(bool on);
+    void toggleFan(bool on);
 };
 
 
