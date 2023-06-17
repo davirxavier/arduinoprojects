@@ -28,21 +28,19 @@ AirConditioner::AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin
     temperatureUpperLimit = 1.5;
     switchTimeoutMillis = 0;
     userTemperature = 99;
-    lastTempCheckMillis = 0;
-    tempCheckIntervalMinutes = 10;
-    lastTemp = -1;
     isCompressorRunning = false;
-    isOn = false;
 
     pinMode(compressorTurnOnPin, OUTPUT);
     pinMode(fanTurnOnPin, OUTPUT);
+    toggleFan(false);
+    toggleCompressor(false);
 }
 
 void AirConditioner::toggleFan(bool on) {
     if (on) {
-        digitalWrite(fanTurnOnPin, LOW);
-    } else {
         digitalWrite(fanTurnOnPin, HIGH);
+    } else {
+        digitalWrite(fanTurnOnPin, LOW);
     }
 }
 
@@ -59,41 +57,16 @@ void AirConditioner::toggleCompressor(bool on) {
 void AirConditioner::start() {
     toggleFan(true);
     switchTimeoutMillis = millis();
-    isOn = true;
 }
 
 void AirConditioner::stop() {
     toggleCompressor(false);
     toggleFan(false);
     switchTimeoutMillis = 0;
-    isOn = false;
 }
 
 void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
-    if (!isOn) {
-        return;
-    }
-
-    if (millis()-lastTempCheckMillis > tempCheckIntervalMinutes*60000) {
-        if (isCompressorRunning &&
-            millis()-switchTimeoutMillis > switchTimeoutMinutes &&
-            abs(roomTemperature - lastTemp) < 0.25) {
-
-            toggleCompressor(false);
-            switchTimeoutMillis = millis();
-        }
-
-        lastTemp = roomTemperature;
-        lastTempCheckMillis = millis();
-    }
-
-    if (coilTemperature <= 3) {
-        toggleCompressor(false);
-        switchTimeoutMillis = millis();
-        return;
-    }
-
-    if (coilTemperature > 3 && roomTemperature > (double) userTemperature + temperatureUpperLimit
+    if (roomTemperature > ((double) userTemperature + temperatureUpperLimit)
         && (unsigned long) (millis()-switchTimeoutMillis) > (switchTimeoutMinutes * 60000)) {
 
         toggleCompressor(true);
@@ -101,7 +74,7 @@ void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
         return;
     }
 
-    if (roomTemperature <= (double) userTemperature - temperatureLowerLimit
+    if (isCompressorRunning && roomTemperature <= (double) userTemperature - temperatureLowerLimit
         && (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 3.0) * 60000)) {
 
         toggleCompressor(false);

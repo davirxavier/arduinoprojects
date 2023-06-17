@@ -28,7 +28,7 @@
 #define COMMAND_BEEP 9
 
 uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
-uint8_t DISPLAY_PINS[4] {11, 255, 12, 13};
+uint8_t DISPLAY_PINS[4] {11, A0, 12, 13};
 uint8_t DP_PIN = 255;
 FourDisplay display(POS_PINS, DISPLAY_PINS, DP_PIN);
 
@@ -57,6 +57,8 @@ void turn();
 void startBeep();
 double readTemp();
 double readCoilTemp();
+
+double currentAvgTemp = 30;
 
 void setup() {
     isOn = false;
@@ -157,6 +159,8 @@ void loop() {
                 }
                 tempAvg = tempAvg / TEMP_AVERAGE_PERIOD_SECONDS;
 
+                currentAvgTemp = tempAvg;
+
                 ac.doChecks(tempAvg, readCoilTemp());
                 currentTempOverPeriod = 0;
             }
@@ -185,6 +189,9 @@ void setUserTemp(uint8_t temp) {
 void updateDisplay() {
     display.write1(2, (userTemp/10)%10, false);
     display.write1(3, userTemp % 10, false);
+
+    display.write1(0, ((int)currentAvgTemp/10)%10, false);
+    display.write1(1, ((int)currentAvgTemp)%10, false);
 }
 
 void turn() {
