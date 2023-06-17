@@ -29,6 +29,8 @@ AirConditioner::AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin
     switchTimeoutMillis = 0;
     userTemperature = 99;
     isCompressorRunning = false;
+    isOn = false;
+    lastTemp = 255;
 
     pinMode(compressorTurnOnPin, OUTPUT);
     pinMode(fanTurnOnPin, OUTPUT);
@@ -57,28 +59,49 @@ void AirConditioner::toggleCompressor(bool on) {
 void AirConditioner::start() {
     toggleFan(true);
     switchTimeoutMillis = millis();
+
+    isOn = true;
 }
 
 void AirConditioner::stop() {
     toggleCompressor(false);
     toggleFan(false);
     switchTimeoutMillis = 0;
+
+    isOn = false;
+}
+
+bool AirConditioner::isSwitchTimeoutOver() {
+    return (unsigned long) (millis()-switchTimeoutMillis) > (switchTimeoutMinutes * 60000);
+}
+
+bool AirConditioner::isSwitchOffTimeoutOver() {
+    return (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 3.0) * 60000);
 }
 
 void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
-    if (roomTemperature > ((double) userTemperature + temperatureUpperLimit)
-        && (unsigned long) (millis()-switchTimeoutMillis) > (switchTimeoutMinutes * 60000)) {
-
-        toggleCompressor(true);
-        switchTimeoutMillis = millis();
+    if (!isOn) {
         return;
     }
 
-    if (isCompressorRunning && roomTemperature <= (double) userTemperature - temperatureLowerLimit
-        && (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 3.0) * 60000)) {
-
+    if (isCompressorRunning && lastTemp != 255 && isSwitchTimeoutOver() && (roomTemperature > lastTemp || (lastTemp-roomTemperature) < 0.4)) {
         toggleCompressor(false);
         switchTimeoutMillis = millis();
+        lastTemp = 255;
+        return;
+    }
+
+    if (!isCompressorRunning && roomTemperature > ((double) userTemperature + temperatureUpperLimit) && isSwitchTimeoutOver()) {
+        toggleCompressor(true);
+        switchTimeoutMillis = millis();
+        lastTemp = roomTemperature;
+        return;
+    }
+
+    if (isCompressorRunning && roomTemperature <= (double) userTemperature - temperatureLowerLimit && isSwitchOffTimeoutOver()) {
+        toggleCompressor(false);
+        switchTimeoutMillis = millis();
+        lastTemp = 255;
         return;
     }
 }

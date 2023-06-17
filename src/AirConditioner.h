@@ -12,15 +12,21 @@ public:
     void start();
     void stop();
     void doChecks(double roomTemperature, double coilTemperature);
+    bool isSwitchTimeoutOver();
+    bool isSwitchOffTimeoutOver();
 
     uint8_t compressorTurnOnPin;
     uint8_t fanTurnOnPin;
     uint8_t userTemperature;
-    uint8_t switchTimeoutMinutes;
+
     double temperatureUpperLimit;
     double temperatureLowerLimit;
 
+    uint8_t switchTimeoutMinutes;
+
 protected:
+    double lastTemp;
+    bool isOn;
     bool isCompressorRunning;
     unsigned long switchTimeoutMillis;
     void toggleCompressor(bool on);
