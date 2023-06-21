@@ -76,7 +76,7 @@ bool AirConditioner::isSwitchTimeoutOver() {
 }
 
 bool AirConditioner::isSwitchOffTimeoutOver() {
-    return (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 3.0) * 60000);
+    return (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 2.0) * 60000);
 }
 
 void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {

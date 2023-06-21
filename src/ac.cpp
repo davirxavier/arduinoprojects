@@ -8,14 +8,14 @@
 #define MIN_TEMP 18
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
-#define SWITCH_TIMEOUT_MINUTES 8
+#define SWITCH_TIMEOUT_MINUTES 5
 #define TEMP_CHECK_INTERVAL_SECONDS 1
 #define TEMP_AVERAGE_PERIOD_SECONDS 15
 #define POWER_TIMEOUT_SECONDS 15
 
 #define RECV_PIN A3
 #define MAIN_RELAY_PIN 3
-#define FAN_RELAY_PIN 2
+#define FAN_RELAY_PIN A0
 #define DEFROST_SENSOR A0
 #define TEMP_SENSOR A1
 #define BEEPER A2
@@ -26,10 +26,11 @@
 #define COMMAND_MINUS 7
 #define COMMAND_PLUS 21
 #define COMMAND_BEEP 9
+#define COMMAND_TEMP 70
 
 uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
-uint8_t DISPLAY_PINS[4] {11, A0, 12, 13};
-uint8_t DP_PIN = 255;
+uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
+uint8_t DP_PIN = 11;
 FourDisplay display(POS_PINS, DISPLAY_PINS, DP_PIN);
 
 IRrecv remote(RECV_PIN);
@@ -45,6 +46,7 @@ Thermistor tempSensor(TEMP_SENSOR);
 double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
 uint8_t currentTempOverPeriod;
 
+bool showRoomTemp;
 bool beepActivated;
 bool isBeeping;
 unsigned long beepTimeout;
@@ -74,6 +76,7 @@ void setup() {
     hasPowerTimeout = false;
     powerTimeout = 0;
     currentTempOverPeriod = 0;
+    showRoomTemp = false;
 
     remote.enableIRIn();
     remoteTimeout = 0;
@@ -140,6 +143,13 @@ void loop() {
                     beepActivated = !beepActivated;
                 }
                 break;
+            case COMMAND_TEMP:
+                if (isOn) {
+                    commandRead = true;
+                    startBeep();
+                    showRoomTemp = !showRoomTemp;
+                }
+                break;
             default: ;
         }
 
@@ -187,11 +197,13 @@ void setUserTemp(uint8_t temp) {
 }
 
 void updateDisplay() {
-    display.write1(2, (userTemp/10)%10, false);
-    display.write1(3, userTemp % 10, false);
-
-    display.write1(0, ((int)currentAvgTemp/10)%10, false);
-    display.write1(1, ((int)currentAvgTemp)%10, false);
+    if (showRoomTemp) {
+        display.write1(2, ((int)currentAvgTemp/10)%10, false);
+        display.write1(3, ((int)currentAvgTemp)%10, true);
+    } else {
+        display.write1(2, (userTemp/10)%10, false);
+        display.write1(3, userTemp % 10, false);
+    }
 }
 
 void turn() {
