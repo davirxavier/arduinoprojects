@@ -9,7 +9,7 @@ Janky wiring diagram:
 
 ### Air conditioner controlling process
 
-1. Read remote commands and do accordingly:
+1. Read remote commands and do accordingly and beep (if beep turned on):
     - Turn on/off
       - If turn on:
         1. Set evaporator fan on
@@ -21,8 +21,8 @@ Janky wiring diagram:
     - Lower/increase desired temperature
     - Toggle beep
     - Toggle show/hide average ambient temperature in display (only 2 digits available in display)
-2. Update display to show desired temperature (or ambient) if ac is on
-3. If ac is turned on, and it has passed 1s from the last check:
+3. Update display to show desired temperature (or ambient) if ac is on
+4. If ac is turned on, and it has passed 1s from the last check:
    - If it has passed x seconds from the last check:
      1. Calculate average from saved temperatures
      2. Do air conditioner checks:
