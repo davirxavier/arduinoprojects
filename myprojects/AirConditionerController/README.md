@@ -5,7 +5,7 @@ Using an Arduino Pro Mini to control my dad's legacy split air conditioner unit.
 ### Wiring
 
 Janky wiring diagram:
-![Janky wiring diagram](/arduinoac.png)
+![Janky wiring diagram](arduinoac.png)
 
 ### Air conditioner controlling process
 
