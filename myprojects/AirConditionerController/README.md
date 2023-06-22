@@ -1,6 +1,6 @@
 # Air Conditioner Controller
 
-Using an Arduino Pro Mini to control my dad's legacy split air conditioner unit.
+Using an Arduino to control my dad's legacy split air conditioner unit.
 
 ### Wiring
 
