@@ -12,6 +12,10 @@
 #define LED_CONTROL_PIN 5
 #define LED_INTERVAL 15
 
+#define TEMPERATURE_PIN 10
+
+#define SWITCH_TIMEOUT_MINUTES 2
+
 int ledPercent;
 int lastLedPercent;
 int speedPercent;
@@ -27,10 +31,15 @@ double realTemp = 300;
 unsigned long lastUpdateDisplay;
 unsigned long lastUpdatedRPM;
 
+unsigned long lastSwitched = 0;
+bool isHeatingOn = false;
+bool isAllOn = false;
+
 LiquidCrystal_I2C display(LCD_ADDR, LCD_COLS, LCD_LINES);
 
 void printInfo();
 void processCommands();
+void processTemp();
 double readTemp();
 void changeLed(bool increase);
 void changeFanSpeed(bool increase);
@@ -41,6 +50,7 @@ void setup() {
     pinMode(FAN_CONTROL_PIN, OUTPUT);
     pinMode(FAN_SPEED_PIN, OUTPUT);
     pinMode(LED_CONTROL_PIN, OUTPUT);
+    pinMode(TEMPERATURE_PIN, OUTPUT);
     attachInterrupt(digitalPinToInterrupt(FAN_READING_PIN), countSpeed, RISING);
 
     ledPercent = 0;
@@ -74,7 +84,7 @@ void loop() {
 
     if (millis() - lastUpdateDisplay > 1000) {
         realTemp = readTemp();
-
+        processTemp();
         printInfo();
         lastUpdateDisplay = millis();
     }
@@ -108,6 +118,22 @@ void processCommands() {
             }
 
             inString = "";
+        }
+    }
+}
+
+void processTemp() {
+    if (isAllOn) {
+        if (isHeatingOn && realTemp >= userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_MINUTES*1000)) {
+            isHeatingOn = false;
+            digitalWrite(TEMPERATURE_PIN, LOW);
+            lastSwitched = millis();
+        }
+
+        if (!isHeatingOn && realTemp < userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_MINUTES*1000)) {
+            isHeatingOn = true;
+            digitalWrite(TEMPERATURE_PIN, HIGH);
+            lastSwitched = millis();
         }
     }
 }
