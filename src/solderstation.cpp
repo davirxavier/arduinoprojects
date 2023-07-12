@@ -49,13 +49,14 @@ bool isAllOn = false;
 
 LiquidCrystal_I2C display(LCD_ADDR, LCD_COLS, LCD_LINES);
 
-void printInfo();
+void updateDisplay();
 void processCommands();
 void processTemp();
 double readTemp();
 void changeLed(bool increase);
 void changeFanSpeed(bool increase);
 int getFanSpeed();
+void turnOnOff();
 
 void setup() {
     pinMode(10, OUTPUT);
@@ -73,8 +74,10 @@ void setup() {
     lastSpeedPercent = -1;
 
     display.begin();
-    display.backlight();
     display.clear();
+
+    isAllOn = true;
+    turnOnOff();
 
     Serial.begin(9600);
 }
@@ -82,30 +85,53 @@ void setup() {
 void loop() {
     processCommands();
 
-    if (speedPercent != lastSpeedPercent && speedPercent <= 0) {
-        digitalWrite(FAN_CONTROL_PIN, LOW);
-        setPWM9(0);
-    } else if (speedPercent != lastSpeedPercent) {
-        digitalWrite(FAN_CONTROL_PIN, HIGH);
-        setPWM9(speedPercent/100.0f);
-    }
+    if (isAllOn) {
+        if (speedPercent != lastSpeedPercent && speedPercent <= 0) {
+            digitalWrite(FAN_CONTROL_PIN, LOW);
+            setPWM9(0);
+        } else if (speedPercent != lastSpeedPercent) {
+            digitalWrite(FAN_CONTROL_PIN, HIGH);
+            setPWM9(speedPercent/100.0f);
+        }
 
-    if (ledPercent != lastLedPercent) {
-        analogWrite(LED_CONTROL_PIN, map(ledPercent, 0, 100, 0, 255));
-    }
+        if (ledPercent != lastLedPercent) {
+            analogWrite(LED_CONTROL_PIN, map(ledPercent, 0, 100, 0, 255));
+        }
 
-    if (millis() - lastUpdateDisplay > 1000) {
-        realTemp = readTemp();
-        processTemp();
-        printInfo();
-        lastUpdateDisplay = millis();
+        if (millis() - lastUpdateDisplay > 1000) {
+            realTemp = readTemp();
+            processTemp();
+            updateDisplay();
+            lastUpdateDisplay = millis();
+        }
     }
 
     lastSpeedPercent = speedPercent;
     lastLedPercent = ledPercent;
 }
 
-void printInfo() {
+void turnOnOff() {
+    isAllOn = !isAllOn;
+
+    if (isAllOn) {
+        display.display();
+        display.backlight();
+
+        lastSpeedPercent = -1;
+        lastLedPercent = -1;
+        updateDisplay();
+    } else {
+        display.noDisplay();
+        display.noBacklight();
+
+        analogWrite(LED_CONTROL_PIN, 0);
+        digitalWrite(FAN_CONTROL_PIN, LOW);
+        setPWM9(0);
+        digitalWrite(TEMPERATURE_PIN, LOW);
+    }
+}
+
+void updateDisplay() {
     snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C").c_str(), userTemp, lround(realTemp));
     display.setCursor(0, 0);
     display.printstr(toPrint);
@@ -123,10 +149,12 @@ void processCommands() {
         if (inChar == 10) {
             if (inString.startsWith("v+")) {
                 changeFanSpeed(true);
-                printInfo();
+                updateDisplay();
             } else if (inString.startsWith("v-")) {
                 changeFanSpeed(false);
-                printInfo();
+                updateDisplay();
+            } else if (inString.startsWith("tg")) {
+                turnOnOff();
             }
 
             inString = "";
