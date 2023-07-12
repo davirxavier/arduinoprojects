@@ -6,9 +6,8 @@
 #define LCD_LINES 2
 
 #define FAN_CONTROL_PIN 4
-#define FAN_SPEED_PIN 3
-#define FAN_READING_PIN 2
-#define FAN_INTERVAL 15
+#define FAN_SPEED_PIN 9
+#define FAN_INTERVAL 20
 #define LED_CONTROL_PIN 5
 #define LED_INTERVAL 15
 
@@ -16,22 +15,35 @@
 
 #define SWITCH_TIMEOUT_MINUTES 2
 
+//configure Timer 1 (pins 9,10) to output 25kHz PWM
+void setupTimer9and10(){
+    //Set PWM frequency to about 25khz on pins 9,10 (timer 1 mode 10, no prescale, count to 320)
+    TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
+    TCCR1B = (1 << CS10) | (1 << WGM13);
+    ICR1 = 320;
+    OCR1A = 0;
+    OCR1B = 0;
+}
+
+//equivalent of analogWrite on pin 9
+void setPWM9(float f){
+    f=f<0?0:f>1?1:f;
+    OCR1A = (uint16_t)(320*f);
+}
+
 int ledPercent;
 int lastLedPercent;
 int speedPercent;
 int lastSpeedPercent;
-int speedRpm = 0;
-int speedCounter = 0;
 String inString;
-char toPrint[16];
+char toPrint[17];
 
 int userTemp = 300;
 double realTemp = 300;
 
-unsigned long lastUpdateDisplay;
-unsigned long lastUpdatedRPM;
-
+unsigned long lastUpdateDisplay = 0;
 unsigned long lastSwitched = 0;
+
 bool isHeatingOn = false;
 bool isAllOn = false;
 
@@ -44,14 +56,16 @@ double readTemp();
 void changeLed(bool increase);
 void changeFanSpeed(bool increase);
 int getFanSpeed();
-void countSpeed();
 
 void setup() {
+    pinMode(10, OUTPUT);
+
     pinMode(FAN_CONTROL_PIN, OUTPUT);
     pinMode(FAN_SPEED_PIN, OUTPUT);
     pinMode(LED_CONTROL_PIN, OUTPUT);
     pinMode(TEMPERATURE_PIN, OUTPUT);
-    attachInterrupt(digitalPinToInterrupt(FAN_READING_PIN), countSpeed, RISING);
+
+    setupTimer9and10();
 
     ledPercent = 0;
     lastLedPercent = -1;
@@ -62,8 +76,6 @@ void setup() {
     display.backlight();
     display.clear();
 
-    lastUpdateDisplay = 0;
-    lastUpdatedRPM = 0;
     Serial.begin(9600);
 }
 
@@ -72,10 +84,10 @@ void loop() {
 
     if (speedPercent != lastSpeedPercent && speedPercent <= 0) {
         digitalWrite(FAN_CONTROL_PIN, LOW);
-        analogWrite(FAN_SPEED_PIN, 255);
+        setPWM9(0);
     } else if (speedPercent != lastSpeedPercent) {
         digitalWrite(FAN_CONTROL_PIN, HIGH);
-        analogWrite(FAN_SPEED_PIN, map(speedPercent, 0, 100, 0, 255));
+        setPWM9(speedPercent/100.0f);
     }
 
     if (ledPercent != lastLedPercent) {
@@ -94,11 +106,11 @@ void loop() {
 }
 
 void printInfo() {
-    snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C").c_str(), userTemp, realTemp);
+    snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C").c_str(), userTemp, lround(realTemp));
     display.setCursor(0, 0);
     display.printstr(toPrint);
 
-    snprintf(toPrint, sizeof(toPrint), "V: %i - %iRPM   ", getFanSpeed(), speedRpm);
+    snprintf(toPrint, sizeof(toPrint), "V: %i | LED: 100%%", getFanSpeed());
     display.setCursor(0, 1);
     display.printstr(toPrint);
 }
@@ -139,7 +151,7 @@ void processTemp() {
 }
 
 double readTemp() {
-    return 300;
+    return 300.0;
 }
 
 void changeLed(bool increase) {
@@ -154,14 +166,4 @@ void changeFanSpeed(bool increase) {
 
 int getFanSpeed() {
     return ceil(speedPercent/FAN_INTERVAL);
-}
-
-void countSpeed() {
-    speedCounter++;
-
-    if (millis() - lastUpdatedRPM > 1000) {
-        speedRpm = speedCounter * 60 / 2;
-        speedCounter = 0;
-        lastUpdatedRPM = millis();
-    }
 }
