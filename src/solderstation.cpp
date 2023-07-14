@@ -13,6 +13,7 @@
 #define LED_INTERVAL 20
 
 #define TEMPERATURE_PIN 10
+#define MAX_TEMP 500
 
 #define SWITCH_TIMEOUT_MINUTES 2
 
@@ -229,5 +230,5 @@ void restoreConfiguration(uint8_t slot) {
     speedPercent = speedPercent >= 100 ? 100 : (speedPercent <= 0 ? 0 : speedPercent);
     ledPercent = cfg.led*LED_INTERVAL;
     ledPercent = ledPercent >= 100 ? 100 : (ledPercent <= 0 ? 0 : ledPercent);
-    userTemp = cfg.temperature;
+    userTemp = cfg.temperature > MAX_TEMP ? MAX_TEMP : cfg.temperature;
 }
