@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "LiquidCrystal_I2C.h"
+#include "EEPROMex.h"
 
 #define LCD_ADDR 0x27
 #define LCD_COLS 16
@@ -9,11 +10,17 @@
 #define FAN_SPEED_PIN 9
 #define FAN_INTERVAL 20
 #define LED_CONTROL_PIN 5
-#define LED_INTERVAL 15
+#define LED_INTERVAL 20
 
 #define TEMPERATURE_PIN 10
 
 #define SWITCH_TIMEOUT_MINUTES 2
+
+struct Config {
+    uint8_t speed : 3;
+    uint8_t led : 3;
+    uint16_t temperature : 9;
+};
 
 //configure Timer 1 (pins 9,10) to output 25kHz PWM
 void setupTimer9and10(){
@@ -38,7 +45,7 @@ int lastSpeedPercent;
 String inString;
 char toPrint[17];
 
-int userTemp = 300;
+unsigned int userTemp = 300;
 double realTemp = 300;
 
 unsigned long lastUpdateDisplay = 0;
@@ -57,6 +64,8 @@ void changeLed(bool increase);
 void changeFanSpeed(bool increase);
 int getFanSpeed();
 void turnOnOff();
+void saveConfiguration(uint8_t slot);
+void restoreConfiguration(uint8_t slot);
 
 void setup() {
     pinMode(10, OUTPUT);
@@ -147,10 +156,10 @@ void processCommands() {
         inString += (char)inChar;
 
         if (inChar == 10) {
-            if (inString.startsWith("v+")) {
+            if (isAllOn && inString.startsWith("v+")) {
                 changeFanSpeed(true);
                 updateDisplay();
-            } else if (inString.startsWith("v-")) {
+            } else if (isAllOn && inString.startsWith("v-")) {
                 changeFanSpeed(false);
                 updateDisplay();
             } else if (inString.startsWith("tg")) {
@@ -194,4 +203,31 @@ void changeFanSpeed(bool increase) {
 
 int getFanSpeed() {
     return ceil(speedPercent/FAN_INTERVAL);
+}
+
+int getLedValue() {
+    return ceil(ledPercent/LED_INTERVAL);
+}
+
+void saveConfiguration(uint8_t slot) {
+    Config cfg{};
+    cfg.speed = getFanSpeed();
+    cfg.led = getLedValue();
+    cfg.temperature = userTemp;
+
+    int address = slot*sizeof(Config);
+    EEPROM.updateBlock(address, cfg);
+}
+
+void restoreConfiguration(uint8_t slot) {
+    int address = slot*sizeof(Config);
+
+    Config cfg{};
+    EEPROM.readBlock(address, cfg);
+
+    speedPercent = cfg.speed*FAN_INTERVAL;
+    speedPercent = speedPercent >= 100 ? 100 : (speedPercent <= 0 ? 0 : speedPercent);
+    ledPercent = cfg.led*LED_INTERVAL;
+    ledPercent = ledPercent >= 100 ? 100 : (ledPercent <= 0 ? 0 : ledPercent);
+    userTemp = cfg.temperature;
 }
