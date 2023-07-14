@@ -14,8 +14,10 @@
 
 #define TEMPERATURE_PIN 10
 #define MAX_TEMP 500
+#define HEATING_ON_VAL LOW
+#define HEATING_OFF_VAL HIGH
 
-#define SWITCH_TIMEOUT_MINUTES 2
+#define SWITCH_TIMEOUT_SECONDS 120
 
 struct Config {
     uint8_t speed : 3;
@@ -130,6 +132,10 @@ void turnOnOff() {
         lastSpeedPercent = -1;
         lastLedPercent = -1;
         updateDisplay();
+
+        if (isHeatingOn) {
+            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
+        }
     } else {
         display.noDisplay();
         display.noBacklight();
@@ -137,7 +143,7 @@ void turnOnOff() {
         analogWrite(LED_CONTROL_PIN, 0);
         digitalWrite(FAN_CONTROL_PIN, LOW);
         setPWM9(0);
-        digitalWrite(TEMPERATURE_PIN, LOW);
+        digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
     }
 }
 
@@ -174,15 +180,15 @@ void processCommands() {
 
 void processTemp() {
     if (isAllOn) {
-        if (isHeatingOn && realTemp >= userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_MINUTES*1000)) {
+        if (isHeatingOn && realTemp >= userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
             isHeatingOn = false;
-            digitalWrite(TEMPERATURE_PIN, LOW);
+            digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
             lastSwitched = millis();
         }
 
-        if (!isHeatingOn && realTemp < userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_MINUTES*1000)) {
+        if (!isHeatingOn && realTemp < userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
             isHeatingOn = true;
-            digitalWrite(TEMPERATURE_PIN, HIGH);
+            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
             lastSwitched = millis();
         }
     }
