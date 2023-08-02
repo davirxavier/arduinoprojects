@@ -1,6 +1,8 @@
 #include "Arduino.h"
 #include "LiquidCrystal_I2C.h"
 #include "EEPROMex.h"
+#include "max6675.h"
+#include "IRremote.h"
 
 #define LCD_ADDR 0x27
 #define LCD_COLS 16
@@ -16,6 +18,40 @@
 #define MAX_TEMP 500
 #define HEATING_ON_VAL LOW
 #define HEATING_OFF_VAL HIGH
+#define SENSOR_CLK 10
+#define SENSOR_CS 11
+#define SENSOR_SO 12
+
+/*
+ * 69 - power
+ * 71 - mute
+ * 68 - mode
+ * 67 - eq
+ * 21 - next
+ * 7 - prev
+ * 9 - pause
+ * 25 - vol+
+ * 22 - vol-
+ * 64 - ret
+ * 13 - 0
+ * 12 - 1
+ * 24 - 2
+ * 94 - 3
+ * 8 - 4
+ * 28 - 5
+ * 90 - 6
+ * 66 - 7
+ * 82 - 8
+ * 74 - 9
+ */
+#define CMD_POWER 69
+#define FAN_PLUS 25
+#define FAN_MINUS 22
+#define LED_PLUS 9
+#define LED_MINUS 13
+#define TEMP_PLUS 21
+#define TEMP_MINUS 7
+#define IR_SENSOR_PIN A0
 
 #define SWITCH_TIMEOUT_SECONDS 120
 
@@ -56,8 +92,13 @@ unsigned long lastSwitched = 0;
 
 bool isHeatingOn = false;
 bool isAllOn = false;
+MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_SO);
 
 LiquidCrystal_I2C display(LCD_ADDR, LCD_COLS, LCD_LINES);
+
+IRrecv remote(IR_SENSOR_PIN);
+bool remoteResumed = true;
+unsigned long remoteTimeout = 0;
 
 void updateDisplay();
 void processCommands();
@@ -87,9 +128,12 @@ void setup() {
 
     display.begin();
     display.clear();
+    display.setBacklight(8);
 
     isAllOn = true;
     turnOnOff();
+
+    remote.enableIRIn();
 
     Serial.begin(9600);
 }
@@ -148,32 +192,63 @@ void turnOnOff() {
 }
 
 void updateDisplay() {
-    snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C").c_str(), userTemp, lround(realTemp));
+    snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
     display.setCursor(0, 0);
     display.printstr(toPrint);
 
-    snprintf(toPrint, sizeof(toPrint), "V: %i | LED: 100%%", getFanSpeed());
+    snprintf(toPrint, sizeof(toPrint), "V: %i | LED: %i%%     ", getFanSpeed(), ledPercent);
     display.setCursor(0, 1);
     display.printstr(toPrint);
 }
 
 void processCommands() {
-    while (Serial.available() > 0) {
-        int inChar = Serial.read();
-        inString += (char)inChar;
+    if (!remoteResumed && millis()-remoteTimeout > 650) {
+        remote.resume();
+        remoteResumed = true;
+    }
 
-        if (inChar == 10) {
-            if (isAllOn && inString.startsWith("v+")) {
-                changeFanSpeed(true);
-                updateDisplay();
-            } else if (isAllOn && inString.startsWith("v-")) {
-                changeFanSpeed(false);
-                updateDisplay();
-            } else if (inString.startsWith("tg")) {
-                turnOnOff();
+    if (remoteResumed && remote.decode()) {
+        uint16_t command = remote.decodedIRData.command;
+
+        if (isAllOn) {
+            switch (command) {
+                case CMD_POWER:
+                    turnOnOff();
+                    break;
+                case TEMP_PLUS:
+                    userTemp++;
+                    break;
+                case TEMP_MINUS:
+                    userTemp--;
+                    break;
+                case FAN_PLUS:
+                    changeFanSpeed(true);
+                    break;
+                case FAN_MINUS:
+                    changeFanSpeed(false);
+                    break;
+                case LED_PLUS:
+                    changeLed(true);
+                    break;
+                case LED_MINUS:
+                    changeLed(false);
+                    break;
+                default:;
             }
 
-            inString = "";
+            if (command != CMD_POWER) {
+                updateDisplay();
+            }
+
+            if (command == TEMP_PLUS || command == TEMP_MINUS) {
+                remote.resume();
+            } else {
+                remoteResumed = false;
+                remoteTimeout = millis();
+            }
+        } else if (command == CMD_POWER) {
+            turnOnOff();
+            remote.resume();
         }
     }
 }
@@ -195,11 +270,12 @@ void processTemp() {
 }
 
 double readTemp() {
-    return 300.0;
+    float reading = tempSensor.readCelsius();
+    return reading + map(reading, 0, 400, 0, 12);
 }
 
 void changeLed(bool increase) {
-    ledPercent = increase ? ledPercent+LED_INTERVAL : speedPercent-LED_INTERVAL;
+    ledPercent = increase ? ledPercent+LED_INTERVAL : ledPercent-LED_INTERVAL;
     ledPercent = ledPercent < 0 ? 0 : (ledPercent > 100 ? 100 : ledPercent);
 }
 
