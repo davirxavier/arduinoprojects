@@ -53,7 +53,7 @@
 #define TEMP_MINUS 7
 #define IR_SENSOR_PIN A0
 
-#define SWITCH_TIMEOUT_SECONDS 120
+#define SWITCH_TIMEOUT_SECONDS 10
 
 struct Config {
     uint8_t speed : 3;
@@ -85,7 +85,7 @@ String inString;
 char toPrint[17];
 
 unsigned int userTemp = 300;
-double realTemp = 300;
+double realTemp = 150;
 
 unsigned long lastUpdateDisplay = 0;
 unsigned long lastSwitched = 0;
@@ -255,13 +255,13 @@ void processCommands() {
 
 void processTemp() {
     if (isAllOn) {
-        if (isHeatingOn && realTemp >= userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+        if (isHeatingOn && realTemp >= (userTemp-22) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
             isHeatingOn = false;
             digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
             lastSwitched = millis();
         }
 
-        if (!isHeatingOn && realTemp < userTemp && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+        if (!isHeatingOn && realTemp < (userTemp-22) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
             isHeatingOn = true;
             digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
             lastSwitched = millis();
