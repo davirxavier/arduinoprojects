@@ -14,10 +14,10 @@
 #define LED_CONTROL_PIN 5
 #define LED_INTERVAL 20
 
-#define TEMPERATURE_PIN 10
+#define TEMPERATURE_PIN 8
 #define MAX_TEMP 500
-#define HEATING_ON_VAL LOW
-#define HEATING_OFF_VAL HIGH
+#define HEATING_ON_VAL HIGH
+#define HEATING_OFF_VAL LOW
 #define SENSOR_CLK 10
 #define SENSOR_CS 11
 #define SENSOR_SO 12
@@ -51,7 +51,12 @@
 #define LED_MINUS 13
 #define TEMP_PLUS 21
 #define TEMP_MINUS 7
+#define CMD_STOP 71
+#define CMD_SAVE 67
+#define CMD_RECOVER 64
 #define IR_SENSOR_PIN A0
+
+uint8_t numbersIr[] = {12, 24, 94, 8, 28, 90, 66, 82, 74};
 
 #define SWITCH_TIMEOUT_SECONDS 10
 
@@ -90,6 +95,9 @@ double realTemp = 150;
 unsigned long lastUpdateDisplay = 0;
 unsigned long lastSwitched = 0;
 
+bool isRecovering = false;
+bool isSaving = false;
+unsigned long saveRecoverTimeout = 0;
 bool isHeatingOn = false;
 bool isAllOn = false;
 MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_SO);
@@ -192,13 +200,15 @@ void turnOnOff() {
 }
 
 void updateDisplay() {
-    snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
-    display.setCursor(0, 0);
-    display.printstr(toPrint);
+    if (!isSaving && !isRecovering) {
+        snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
+        display.setCursor(0, 0);
+        display.printstr(toPrint);
 
-    snprintf(toPrint, sizeof(toPrint), "V: %i | LED: %i%%     ", getFanSpeed(), ledPercent);
-    display.setCursor(0, 1);
-    display.printstr(toPrint);
+        snprintf(toPrint, sizeof(toPrint), "V: %i | LED: %i%%     ", getFanSpeed(), ledPercent);
+        display.setCursor(0, 1);
+        display.printstr(toPrint);
+    }
 }
 
 void processCommands() {
@@ -233,7 +243,46 @@ void processCommands() {
                 case LED_MINUS:
                     changeLed(false);
                     break;
-                default:;
+                case CMD_RECOVER:
+                    isRecovering = true;
+                    isSaving = false;
+
+                    display.clear();
+                    display.setCursor(0, 0);
+                    display.printstr("Pressione 1 a 9");
+                    display.setCursor(0, 1);
+                    display.printstr("para recuperar");
+                    break;
+                case CMD_SAVE:
+                    isSaving = true;
+                    isRecovering = false;
+
+                    display.clear();
+                    display.setCursor(0, 0);
+                    display.printstr("Pressione 1 a 9");
+                    display.setCursor(0, 1);
+                    display.printstr("para salvar");
+                    break;
+                case CMD_STOP:
+                    isRecovering = false;
+                    isSaving = false;
+                    break;
+                default:
+                    if (isSaving || isRecovering) {
+                        for (uint8_t i = 0; i < sizeof(numbersIr); i++) {
+                            if (numbersIr[i] == command) {
+                                if (isSaving) {
+                                    saveConfiguration(i+1);
+                                } else if (isRecovering) {
+                                    restoreConfiguration(i+1);
+                                }
+                                isSaving = false;
+                                isRecovering = false;
+                                updateDisplay();
+                                break;
+                            }
+                        }
+                    }
             }
 
             if (command != CMD_POWER) {
@@ -261,7 +310,7 @@ void processTemp() {
             lastSwitched = millis();
         }
 
-        if (!isHeatingOn && realTemp < (userTemp-22) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+        if (!isHeatingOn && realTemp < (userTemp-5) && millis()-lastSwitched > ((SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)))/3) {
             isHeatingOn = true;
             digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
             lastSwitched = millis();
@@ -271,7 +320,7 @@ void processTemp() {
 
 double readTemp() {
     float reading = tempSensor.readCelsius();
-    return reading + map(reading, 0, 400, 0, 12);
+    return reading + (reading > 50 ? map(reading, 50, MAX_TEMP, 0, 12) : 0);
 }
 
 void changeLed(bool increase) {
