@@ -2,7 +2,7 @@
 #include <ESP8266WiFi.h>
 #include "SinricPro.h"
 #include "SinricProMotionsensor.h"
-#include "util.h"
+#include "daviutil.h"
 #include "Ultrasonic.h"
 #include "credentials.h"
 
@@ -10,9 +10,9 @@
 #define CONNECTION_TIMEOUT_SECONDS 15
 #define ULTRASONIC_T 0
 #define ULTRASONIC_E 2
-#define SENSOR_CHECK_INTERVAL_SECONDS 1
+#define SENSOR_CHECK_INTERVAL_SECONDS 10
 #define SENSOR_READINGS 15
-#define SENSOR_DIFF_PERCENT 0.5
+#define SENSOR_DIFF_PERCENT 0.4
 
 Ultrasonic ultrasonic(ULTRASONIC_T, ULTRASONIC_E);
 
