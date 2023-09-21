@@ -9,7 +9,7 @@
 #define DEVICE_ID "650750b9813f7a9c818a229d"
 #define CONNECTION_TIMEOUT_SECONDS 15
 #define ULTRASONIC_T 0
-#define ULTRASONIC_E 2
+#define ULTRASONIC_E 3
 #define SENSOR_CHECK_INTERVAL_SECONDS 10
 #define SENSOR_READINGS 15
 #define SENSOR_DIFF_PERCENT 0.4
@@ -84,7 +84,7 @@ void setupDevice() {
 }
 
 void setup() {
-    Serial.begin(9600);
+    Serial.begin(9600, SERIAL_8N1,SERIAL_TX_ONLY);
     pinMode(0, OUTPUT);
     digitalWrite(0, LOW);
 
