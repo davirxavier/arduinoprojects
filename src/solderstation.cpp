@@ -321,6 +321,8 @@ void processTemp() {
 
         if (!isHeatingOn && realTemp < 50) {
             initialHeatUpComplete = false;
+            isHeatingOn = true;
+            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
         }
 
         if (isHeatingOn && realTemp >= (userTemp-20) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
