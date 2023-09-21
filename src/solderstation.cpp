@@ -55,6 +55,7 @@
 #define CMD_SAVE 67
 #define CMD_RECOVER 64
 #define IR_SENSOR_PIN A0
+#define CMD_DISABLE_HEATING 68
 
 uint8_t numbersIr[] = {12, 24, 94, 8, 28, 90, 66, 82, 74};
 
@@ -98,8 +99,10 @@ unsigned long lastSwitched = 0;
 bool isRecovering = false;
 bool isSaving = false;
 unsigned long saveRecoverTimeout = 0;
+bool disableHeating = false;
 bool isHeatingOn = false;
 bool isAllOn = false;
+bool initialHeatUpComplete = false;
 MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_SO);
 
 LiquidCrystal_I2C display(LCD_ADDR, LCD_COLS, LCD_LINES);
@@ -201,7 +204,11 @@ void turnOnOff() {
 
 void updateDisplay() {
     if (!isSaving && !isRecovering) {
-        snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
+        if (disableHeating) {
+            snprintf(toPrint, sizeof(toPrint), "T: %s", "OFF");
+        } else {
+            snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
+        }
         display.setCursor(0, 0);
         display.printstr(toPrint);
 
@@ -267,6 +274,9 @@ void processCommands() {
                     isRecovering = false;
                     isSaving = false;
                     break;
+                case CMD_DISABLE_HEATING:
+                    disableHeating = !disableHeating;
+                    break;
                 default:
                     if (isSaving || isRecovering) {
                         for (uint8_t i = 0; i < sizeof(numbersIr); i++) {
@@ -304,13 +314,23 @@ void processCommands() {
 
 void processTemp() {
     if (isAllOn) {
-        if (isHeatingOn && realTemp >= (userTemp-22) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+        if (disableHeating) {
+            digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
+            return;
+        }
+
+        if (!isHeatingOn && realTemp < 50) {
+            initialHeatUpComplete = false;
+        }
+
+        if (isHeatingOn && realTemp >= (userTemp-20) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+            initialHeatUpComplete = true;
             isHeatingOn = false;
             digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
             lastSwitched = millis();
         }
 
-        if (!isHeatingOn && realTemp < (userTemp-5) && millis()-lastSwitched > ((SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)))/3) {
+        if (initialHeatUpComplete && !isHeatingOn && realTemp < (userTemp-10) && millis()-lastSwitched > ((SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)))*2) {
             isHeatingOn = true;
             digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
             lastSwitched = millis();
