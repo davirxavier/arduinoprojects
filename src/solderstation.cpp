@@ -98,10 +98,10 @@ unsigned long lastSwitched = 0;
 
 bool isRecovering = false;
 bool isSaving = false;
-unsigned long saveRecoverTimeout = 0;
 bool disableHeating = false;
 bool isHeatingOn = false;
 bool isAllOn = false;
+bool firstTempUpdateDone = false;
 bool initialHeatUpComplete = false;
 MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_SO);
 
@@ -319,24 +319,26 @@ void processTemp() {
             return;
         }
 
-        if (!isHeatingOn && realTemp < 50) {
+        if (!isHeatingOn && (realTemp < 50 || (!firstTempUpdateDone && realTemp < userTemp))) {
             initialHeatUpComplete = false;
             isHeatingOn = true;
             digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
         }
 
-        if (isHeatingOn && realTemp >= (userTemp-20) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
+        if (isHeatingOn && realTemp >= (userTemp-13) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)*4)) {
             initialHeatUpComplete = true;
             isHeatingOn = false;
             digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
             lastSwitched = millis();
         }
 
-        if (initialHeatUpComplete && !isHeatingOn && realTemp < (userTemp-10) && millis()-lastSwitched > ((SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)))*2) {
+        if (initialHeatUpComplete && !isHeatingOn && realTemp < (userTemp-5) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
             isHeatingOn = true;
             digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
             lastSwitched = millis();
         }
+
+        firstTempUpdateDone = true;
     }
 }
 
