@@ -137,7 +137,7 @@ void setup() {
     speedPercent = 0;
     lastSpeedPercent = -1;
 
-    display.begin();
+    display.begin(LCD_COLS, LCD_LINES);
     display.clear();
     display.setBacklight(8);
 
@@ -204,11 +204,10 @@ void turnOnOff() {
 
 void updateDisplay() {
     if (!isSaving && !isRecovering) {
-        if (disableHeating) {
-            snprintf(toPrint, sizeof(toPrint), "T: %s", "OFF");
-        } else {
-            snprintf(toPrint, sizeof(toPrint), (String("T: %i") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(), userTemp, lround(realTemp));
-        }
+        snprintf(toPrint, sizeof(toPrint),
+                 (String("T: %s") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(),
+                 disableHeating ? "OFF" : String(userTemp).c_str(),
+                 lround(realTemp));
         display.setCursor(0, 0);
         display.printstr(toPrint);
 
