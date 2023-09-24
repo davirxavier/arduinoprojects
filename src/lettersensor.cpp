@@ -2,8 +2,8 @@
 #include <ESP8266WiFi.h>
 #include "SinricPro.h"
 #include "SinricProMotionsensor.h"
-#include "daviutil.h"
 #include "Ultrasonic.h"
+#include "WiFiManager.h"
 #include "credentials.h"
 
 #define DEVICE_ID "650750b9813f7a9c818a229d"
@@ -33,7 +33,7 @@ void handleSensor() {
     }
 
     if (millis() - lastCheckedSensor > (SENSOR_CHECK_INTERVAL_SECONDS*1000)) {
-        readings[currentReading] = ultrasonic.Ranging(CM);
+        readings[currentReading] = ultrasonic.read(CM);
         Serial.print("Current reading: ");
         Serial.print(readings[currentReading]);
         Serial.println("CM");
@@ -94,8 +94,9 @@ void setup() {
     Serial.print("Connecting");
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    WiFiManager manager;
+    manager.autoConnect("DXLetterSensor");
 
     isConnecting = true;
     connectionStart = millis();
