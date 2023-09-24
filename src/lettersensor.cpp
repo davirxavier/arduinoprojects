@@ -7,25 +7,25 @@
 #include "credentials.h"
 
 #define DEVICE_ID "650750b9813f7a9c818a229d"
-#define CONNECTION_TIMEOUT_SECONDS 15
 #define ULTRASONIC_T 0
 #define ULTRASONIC_E 3
+#define RESET_CONFIG_PIN 2
 #define SENSOR_CHECK_INTERVAL_SECONDS 10
 #define SENSOR_READINGS 15
 #define SENSOR_DIFF_PERCENT 0.4
 
 Ultrasonic ultrasonic(ULTRASONIC_T, ULTRASONIC_E);
+WiFiManager manager;
 
 bool isOn;
-bool isConnecting;
-unsigned long connectionStart;
-unsigned long lastCheckedConn;
 
 long readings[SENSOR_READINGS];
 long lastMedian;
 int currentReading;
 unsigned long lastCheckedSensor;
 bool lastState;
+
+void(* resetFunc) (void) = 0;
 
 void handleSensor() {
     if (!isOn) {
@@ -83,10 +83,21 @@ void setupDevice() {
     lastState = false;
 }
 
+void IRAM_ATTR resetConfig() {
+    Serial.println("Resetting the wifi configuration.");
+    manager.resetSettings();
+    ESP.eraseConfig();
+    delay(200);
+    resetFunc();
+}
+
 void setup() {
     Serial.begin(9600, SERIAL_8N1,SERIAL_TX_ONLY);
     pinMode(0, OUTPUT);
     digitalWrite(0, LOW);
+
+    pinMode(RESET_CONFIG_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(RESET_CONFIG_PIN), resetConfig, FALLING);
 
     lastMedian = -9999999;
     currentReading = 0;
@@ -95,37 +106,14 @@ void setup() {
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-    WiFiManager manager;
-    manager.autoConnect("DXLetterSensor");
+    manager.setDebugOutput(true);
+    manager.autoConnect("DXLetterSensor", "drx123456");
 
-    isConnecting = true;
-    connectionStart = millis();
-    lastCheckedConn = millis();
+    SinricPro.begin(SINRIC_API_KEY, SINRIC_SECRET);
+    setupDevice();
 }
 
 void loop() {
-    if (isConnecting && millis() - lastCheckedConn > 700) {
-        wl_status_t status = WiFi.status();
-        if (status == WL_CONNECTED) {
-            isConnecting = false;
-            SinricPro.begin(SINRIC_API_KEY, SINRIC_SECRET);
-
-            setupDevice();
-            Serial.println();
-            Serial.println("CONNECTION OK");
-        } else {
-            Serial.print(".");
-
-            if (millis() - connectionStart > (CONNECTION_TIMEOUT_SECONDS * 1000)) {
-                isConnecting = false;
-                Serial.println();
-                Serial.println("Connection failed.");
-            }
-        }
-
-        lastCheckedConn = millis();
-    }
-
     if (WiFi.status() == WL_CONNECTED) {
         handleSensor();
         SinricPro.handle();
