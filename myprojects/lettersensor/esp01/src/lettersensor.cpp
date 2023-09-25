@@ -4,7 +4,6 @@
 #include "SinricProMotionsensor.h"
 #include "Ultrasonic.h"
 #include "WiFiManager.h"
-#include "credentials.h"
 
 #define DEVICE_ID "650750b9813f7a9c818a229d"
 #define ULTRASONIC_T 0
@@ -106,10 +105,15 @@ void setup() {
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
+    WiFiManagerParameter apiKey("apiKey", "SINRIC API KEY", NULL, 0);
+    WiFiManagerParameter apiSecret("apiSecret", "SINRIC SECRET KEY", NULL, 0);
+
+    manager.addParameter(&apiKey);
+    manager.addParameter(&apiSecret);
     manager.setDebugOutput(true);
     manager.autoConnect("DXLetterSensor", "drx123456");
 
-    SinricPro.begin(SINRIC_API_KEY, SINRIC_SECRET);
+    SinricPro.begin(apiKey.getValue(), apiSecret.getValue());
     setupDevice();
 }
 
