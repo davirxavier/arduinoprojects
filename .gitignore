@@ -3,3 +3,4 @@ CMakeListsPrivate.txt
 cmake-build-*/
 lib/*
 myprojects/RFIDMoto
+.idea
