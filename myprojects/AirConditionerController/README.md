@@ -34,3 +34,7 @@ Janky wiring diagram:
             - Turn the compressor on and set a timeout for turning it off again
         3. If the ac's compressor is on, has been running for a few minutes and the current room temperature average is below the user's set temperature by one degree:
             - Turn off the compressor the set a timeout for turning it on again
+
+### Air conditioner infrared remote extracted data
+
+![ir data](controllerdata.png)

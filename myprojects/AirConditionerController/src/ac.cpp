@@ -2,6 +2,7 @@
 #include "4display.h"
 #include "IRremote.h"
 #include "AirConditioner.h"
+#include "AirConditionerRemote.h
 #include "Thermistor.h"
 
 #define MAX_TEMP 30
@@ -42,6 +43,7 @@ unsigned long powerTimeout;
 unsigned long tempCheckTimer;
 uint8_t userTemp;
 AirConditioner ac(MAIN_RELAY_PIN, FAN_RELAY_PIN);
+AirConditionerRemote acReader;
 Thermistor tempSensor(TEMP_SENSOR);
 double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
 uint8_t currentTempOverPeriod;
@@ -113,44 +115,10 @@ void loop() {
     if (remoteResumed && remote.decode()) {
         bool commandRead = false;
 
-        switch (remote.decodedIRData.command) {
-            case COMMAND_PLUS:
-                if (isOn) {
-                    commandRead = true;
-                    setUserTemp(userTemp+1);
-                }
-
-                break;
-            case COMMAND_MINUS:
-                if (isOn) {
-                    commandRead = true;
-                    setUserTemp(userTemp-1);
-                }
-
-                break;
-            case COMMAND_POWER:
-                if (!hasPowerTimeout) {
-                    hasPowerTimeout = true;
-                    powerTimeout = millis();
-                    commandRead = true;
-                    turn();
-                }
-                break;
-            case COMMAND_BEEP:
-                if (isOn) {
-                    commandRead = true;
-                    startBeep();
-                    beepActivated = !beepActivated;
-                }
-                break;
-            case COMMAND_TEMP:
-                if (isOn) {
-                    commandRead = true;
-                    startBeep();
-                    showRoomTemp = !showRoomTemp;
-                }
-                break;
-            default: ;
+        if (acReader.readCommand(remote.decodedIRData.decodedRawDataArray,
+                                 remote.decodedIRData.protocol,
+                                 remote.decodedIRData.numberOfBits)) {
+            commandRead = true;
         }
 
         if (commandRead) {
