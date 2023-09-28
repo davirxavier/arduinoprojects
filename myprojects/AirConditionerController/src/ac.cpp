@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "4display.h"
+#include "../lib/4Display/4Display.h"
 #include "IRremote.h"
 #include "AirConditioner.h"
 #include "AirConditionerRemote.h
@@ -22,12 +22,6 @@
 #define BEEPER A2
 
 #define TEMP_SENSOR_OFFSET 9.08
-
-#define COMMAND_POWER 67
-#define COMMAND_MINUS 7
-#define COMMAND_PLUS 21
-#define COMMAND_BEEP 9
-#define COMMAND_TEMP 70
 
 uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
 uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
@@ -118,6 +112,21 @@ void loop() {
         if (acReader.readCommand(remote.decodedIRData.decodedRawDataArray,
                                  remote.decodedIRData.protocol,
                                  remote.decodedIRData.numberOfBits)) {
+            if (acReader.powerToggle && !hasPowerTimeout) {
+                hasPowerTimeout = true;
+                powerTimeout = millis();
+                turn();
+            }
+
+            if (isOn) {
+                setUserTemp(acReader.temp);
+
+                if (acReader.swingToggle) {
+                    showRoomTemp = !showRoomTemp;
+                }
+            }
+
+            acReader.resetToggles();
             commandRead = true;
         }
 

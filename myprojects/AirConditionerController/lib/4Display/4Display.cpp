@@ -2,7 +2,7 @@
 // Created by Davi on 28/05/2023.
 //
 #include <Arduino.h>
-#include "4display.h"
+#include "4Display.h"
 
 uint8_t pinsByIndex[10][7] = {
     {0, 1, 2, 3, 4, 5, 255},
