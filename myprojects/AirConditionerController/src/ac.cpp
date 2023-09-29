@@ -1,11 +1,11 @@
 #include <Arduino.h>
-#include "../lib/4Display/4Display.h"
 #include "IRremote.h"
 #include "AirConditioner.h"
-#include "AirConditionerRemote.h
-#include "Thermistor.h"
+#include "AirConditionerRemote.h"
+#include "../lib/thermistor/Thermistor.h"
+#include "../lib/4Display/4Display.h"
 
-#define MAX_TEMP 30
+#define MAX_TEMP 32
 #define MIN_TEMP 18
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
@@ -116,6 +116,8 @@ void loop() {
                 hasPowerTimeout = true;
                 powerTimeout = millis();
                 turn();
+
+                commandRead = true;
             }
 
             if (isOn) {
@@ -124,10 +126,11 @@ void loop() {
                 if (acReader.swingToggle) {
                     showRoomTemp = !showRoomTemp;
                 }
+
+                commandRead = true;
             }
 
             acReader.resetToggles();
-            commandRead = true;
         }
 
         if (commandRead) {
