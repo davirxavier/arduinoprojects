@@ -127,7 +127,9 @@ void loop() {
                     showRoomTemp = !showRoomTemp;
                 }
 
-                commandRead = true;
+                if (!(acReader.powerToggle && hasPowerTimeout)) {
+                    commandRead = true;
+                }
             }
 
             acReader.resetToggles();
