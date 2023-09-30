@@ -4,15 +4,19 @@
 #include "AirConditionerRemote.h"
 #include "../lib/thermistor/Thermistor.h"
 #include "../lib/4Display/4Display.h"
+#include "EEPROM.h"
 
 #define MAX_TEMP 32
 #define MIN_TEMP 18
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
-#define SWITCH_TIMEOUT_MINUTES 5
+#define SWITCH_TIMEOUT_MINUTES 1
 #define TEMP_CHECK_INTERVAL_SECONDS 1
 #define TEMP_AVERAGE_PERIOD_SECONDS 15
 #define POWER_TIMEOUT_SECONDS 15
+#define SAVE_CONFIG_SIGNATURE 0x2B
+#define SAVE_DATA_TRUE_VALUE 0x1A
+#define SAVE_DATA_FALSE_VALUE 0x1B
 
 #define RECV_PIN A3
 #define MAIN_RELAY_PIN 3
@@ -22,6 +26,17 @@
 #define BEEPER A2
 
 #define TEMP_SENSOR_OFFSET 9.08
+
+// Uncomment to enable test env
+// #define IS_TEST_ENVIRONMENT
+
+#ifdef IS_TEST_ENVIRONMENT
+    #define COMMAND_POWER 162
+    #define COMMAND_MINUS 152
+    #define COMMAND_PLUS 2
+    #define COMMAND_BEEP 226
+    #define COMMAND_TEMP 34
+#endif
 
 uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
 uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
@@ -48,6 +63,10 @@ bool isBeeping;
 unsigned long beepTimeout;
 
 bool isOn;
+bool hasTimeout;
+int savedAddress;
+
+double currentAvgTemp = MAX_TEMP;
 
 void setUserTemp(uint8_t temp);
 void updateDisplay();
@@ -56,7 +75,37 @@ void startBeep();
 double readTemp();
 double readCoilTemp();
 
-double currentAvgTemp = 30;
+int getAddress() {
+    int address = 0;
+    for (int i = 0; i < 512; i++) {
+        if (EEPROM.read(i) == SAVE_CONFIG_SIGNATURE) {
+            address = i;
+            break;
+        }
+    }
+
+    return address+1;
+}
+
+void saveConfig() {
+    bool hasTimeoutEeprom = EEPROM.read(savedAddress) == SAVE_DATA_TRUE_VALUE;
+    if (hasTimeoutEeprom != hasTimeout) {
+        EEPROM.write(savedAddress, hasTimeout ? SAVE_DATA_TRUE_VALUE : SAVE_DATA_FALSE_VALUE);
+    }
+
+    if (EEPROM.read(savedAddress-1) != SAVE_CONFIG_SIGNATURE) {
+        EEPROM.write(savedAddress-1, SAVE_CONFIG_SIGNATURE);
+    }
+}
+
+void readConfig() {
+    int eepromRead = EEPROM.read(savedAddress);
+    if (eepromRead == SAVE_DATA_TRUE_VALUE || eepromRead == SAVE_DATA_FALSE_VALUE) {
+        hasTimeout = eepromRead == SAVE_DATA_TRUE_VALUE;
+    } else {
+        hasTimeout = false;
+    }
+}
 
 void setup() {
     isOn = false;
@@ -73,6 +122,11 @@ void setup() {
     powerTimeout = 0;
     currentTempOverPeriod = 0;
     showRoomTemp = false;
+    hasTimeout = false;
+
+    savedAddress = getAddress();
+    readConfig();
+    ac.setFirstTimeout(!hasTimeout);
 
     remote.enableIRIn();
     remoteTimeout = 0;
@@ -109,6 +163,47 @@ void loop() {
     if (remoteResumed && remote.decode()) {
         bool commandRead = false;
 
+#ifdef IS_TEST_ENVIRONMENT
+        switch (remote.decodedIRData.command) {
+            case COMMAND_PLUS:
+                if (isOn) {
+                    commandRead = true;
+                    setUserTemp(userTemp+1);
+                }
+
+                break;
+            case COMMAND_MINUS:
+                if (isOn) {
+                    commandRead = true;
+                    setUserTemp(userTemp-1);
+                }
+
+                break;
+            case COMMAND_POWER:
+                if (!hasPowerTimeout) {
+                    hasPowerTimeout = true;
+                    powerTimeout = millis();
+                    commandRead = true;
+                    turn();
+                }
+                break;
+            case COMMAND_BEEP:
+                if (isOn) {
+                    commandRead = true;
+                    startBeep();
+                    beepActivated = !beepActivated;
+                }
+                break;
+            case COMMAND_TEMP:
+                if (isOn) {
+                    commandRead = true;
+                    startBeep();
+                    showRoomTemp = !showRoomTemp;
+                }
+                break;
+            default: ;
+        }
+#else
         if (acReader.readCommand(remote.decodedIRData.decodedRawDataArray,
                                  remote.decodedIRData.protocol,
                                  remote.decodedIRData.numberOfBits)) {
@@ -134,6 +229,7 @@ void loop() {
 
             acReader.resetToggles();
         }
+#endif
 
         if (commandRead) {
             remoteTimeout = millis();
@@ -155,6 +251,9 @@ void loop() {
 
                 ac.doChecks(tempAvg, readCoilTemp());
                 currentTempOverPeriod = 0;
+
+                hasTimeout = !ac.isSwitchTimeoutOver();
+                saveConfig();
             }
 
             tempsOverPeriod[currentTempOverPeriod] = readTemp();
@@ -163,6 +262,9 @@ void loop() {
         }
 
         updateDisplay();
+    } else if (millis()-tempCheckTimer > TEMP_CHECK_INTERVAL_SECONDS*2*1000) {
+        hasTimeout = !ac.isSwitchTimeoutOver();
+        saveConfig();
     }
 }
 
@@ -192,6 +294,7 @@ void turn() {
     isOn = !isOn;
 
     if (isOn) {
+        ac.setFirstTimeout(!hasTimeout);
         ac.start();
     } else {
         ac.stop();

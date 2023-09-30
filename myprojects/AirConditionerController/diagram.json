@@ -1,0 +1,95 @@
+{
+    "version": 1,
+    "author": "Xav",
+    "editor": "wokwi",
+    "parts": [
+      { "type": "wokwi-arduino-uno", "id": "uno", "top": 183, "left": 172.2, "attrs": {} },
+      {
+        "type": "wokwi-ir-receiver",
+        "id": "ir1",
+        "top": 459.55,
+        "left": 324.78,
+        "rotate": 180,
+        "attrs": {}
+      },
+      {
+        "type": "wokwi-buzzer",
+        "id": "bz1",
+        "top": 470.4,
+        "left": 220.8,
+        "rotate": 180,
+        "attrs": { "volume": "1" }
+      },
+      { "type": "wokwi-relay-module", "id": "relay1", "top": 125, "left": 518.4, "attrs": {} },
+      { "type": "wokwi-relay-module", "id": "relay2", "top": 192.2, "left": 518.4, "attrs": {} },
+      { "type": "wokwi-vcc", "id": "vcc1", "top": 39.16, "left": 249.6, "attrs": {} },
+      { "type": "wokwi-gnd", "id": "gnd1", "top": 86.4, "left": 249, "attrs": {} },
+      {
+        "type": "wokwi-led",
+        "id": "led1",
+        "top": 75.6,
+        "left": 707.4,
+        "rotate": 90,
+        "attrs": { "color": "red" }
+      },
+      {
+        "type": "wokwi-led",
+        "id": "led2",
+        "top": 190.8,
+        "left": 717,
+        "rotate": 90,
+        "attrs": { "color": "green" }
+      },
+      {
+        "type": "wokwi-7segment",
+        "id": "sevseg1",
+        "top": -70.98,
+        "left": 298.72,
+        "attrs": { "digits": "4", "common": "cathode" }
+      },
+      {
+        "type": "wokwi-ntc-temperature-sensor",
+        "id": "ntc1",
+        "top": 473.1,
+        "left": 403.1,
+        "rotate": 270,
+        "attrs": {}
+      },
+      { "type": "wokwi-ir-remote", "id": "remote1", "top": 316.8, "left": 566.4, "attrs": {} }
+    ],
+    "connections": [
+      [ "ir1:GND", "uno:GND.3", "black", [ "v0" ] ],
+      [ "ir1:VCC", "uno:5V", "red", [ "v0" ] ],
+      [ "ir1:DAT", "uno:A3", "green", [ "v0" ] ],
+      [ "bz1:1", "ir1:GND", "green", [ "v0" ] ],
+      [ "bz1:2", "uno:A2", "green", [ "v0" ] ],
+      [ "relay1:GND", "relay2:GND", "black", [ "h0" ] ],
+      [ "relay1:VCC", "relay2:VCC", "red", [ "h0" ] ],
+      [ "relay1:GND", "uno:GND.1", "black", [ "h0" ] ],
+      [ "gnd1:GND", "uno:GND.1", "black", [ "v0" ] ],
+      [ "vcc1:VCC", "relay1:VCC", "red", [ "v0" ] ],
+      [ "relay1:NO", "relay1:GND", "green", [ "h0" ] ],
+      [ "led1:A", "relay1:VCC", "green", [ "h0" ] ],
+      [ "led1:C", "relay1:COM", "green", [ "h0" ] ],
+      [ "led2:A", "led1:A", "green", [ "h0" ] ],
+      [ "led2:C", "relay2:COM", "green", [ "h0" ] ],
+      [ "relay2:NO", "relay1:NO", "green", [ "h0" ] ],
+      [ "relay2:IN", "uno:3", "green", [ "h0" ] ],
+      [ "relay1:IN", "uno:A0", "green", [ "h0" ] ],
+      [ "sevseg1:A", "uno:4", "green", [ "v0" ] ],
+      [ "sevseg1:B", "uno:5", "green", [ "v0" ] ],
+      [ "sevseg1:C", "uno:6", "green", [ "v0" ] ],
+      [ "sevseg1:D", "uno:7", "green", [ "v0" ] ],
+      [ "sevseg1:E", "uno:8", "green", [ "v0" ] ],
+      [ "sevseg1:F", "uno:9", "green", [ "v0" ] ],
+      [ "sevseg1:G", "uno:10", "green", [ "v0" ] ],
+      [ "sevseg1:DP", "uno:11", "green", [ "v0" ] ],
+      [ "sevseg1:DIG3", "uno:12", "green", [ "v0" ] ],
+      [ "sevseg1:DIG4", "uno:13", "green", [ "v0" ] ],
+      [ "sevseg1:COM", "gnd1:GND", "green", [ "v0" ] ],
+      [ "ntc1:VCC", "ir1:VCC", "red", [ "v0" ] ],
+      [ "ntc1:GND", "ir1:GND", "black", [ "v0" ] ],
+      [ "ntc1:OUT", "uno:A1", "green", [ "v0" ] ]
+    ],
+    "dependencies": {}
+  }

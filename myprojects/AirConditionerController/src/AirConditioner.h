@@ -5,6 +5,8 @@
 #ifndef ARDUINOPLATFORMIO_AIRCONDITIONER_H
 #define ARDUINOPLATFORMIO_AIRCONDITIONER_H
 
+#include <Arduino.h>
+
 class AirConditioner {
 public:
     AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin);
@@ -12,8 +14,8 @@ public:
     void start();
     void stop();
     void doChecks(double roomTemperature, double coilTemperature);
-    bool isSwitchTimeoutOver();
-    bool isSwitchOffTimeoutOver();
+    bool isSwitchTimeoutOver(float multiplier = 1);
+    void setFirstTimeout(bool hasTimeout);
 
     uint8_t compressorTurnOnPin;
     uint8_t fanTurnOnPin;
@@ -28,6 +30,7 @@ protected:
     double lastTemp;
     bool isOn;
     bool isCompressorRunning;
+    bool firstTimeout;
     unsigned long switchTimeoutMillis;
     void toggleCompressor(bool on);
     void toggleFan(bool on);
