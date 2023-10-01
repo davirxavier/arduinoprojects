@@ -18,7 +18,6 @@
  *  - turn off fan and compressor
  * */
 
-#include <Arduino.h>
 #include "AirConditioner.h"
 
 AirConditioner::AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin)
@@ -31,6 +30,7 @@ AirConditioner::AirConditioner(uint8_t compressorTurnOnPin, uint8_t fanTurnOnPin
     isCompressorRunning = false;
     isOn = false;
     lastTemp = 255;
+    firstTimeout = false;
 
     pinMode(compressorTurnOnPin, OUTPUT);
     pinMode(fanTurnOnPin, OUTPUT);
@@ -66,17 +66,13 @@ void AirConditioner::start() {
 void AirConditioner::stop() {
     toggleCompressor(false);
     toggleFan(false);
-    switchTimeoutMillis = 0;
+    switchTimeoutMillis = millis();
 
     isOn = false;
 }
 
-bool AirConditioner::isSwitchTimeoutOver() {
-    return (unsigned long) (millis()-switchTimeoutMillis) > (switchTimeoutMinutes * 60000);
-}
-
-bool AirConditioner::isSwitchOffTimeoutOver() {
-    return (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil((switchTimeoutMinutes / 2.0) * 60000);
+bool AirConditioner::isSwitchTimeoutOver(float multiplier = 1) {
+    return firstTimeout || (unsigned long) (millis()-switchTimeoutMillis) > (unsigned long) ceil(switchTimeoutMinutes * 60000 * multiplier);
 }
 
 void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
@@ -84,10 +80,11 @@ void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
         return;
     }
 
-    if (isCompressorRunning && lastTemp != 255 && isSwitchTimeoutOver() && (roomTemperature > lastTemp || (lastTemp-roomTemperature) < 0.4)) {
+    if (isCompressorRunning && lastTemp != 255 && isSwitchTimeoutOver(4) && (roomTemperature > lastTemp || (lastTemp-roomTemperature) < 0.4)) {
         toggleCompressor(false);
         switchTimeoutMillis = millis();
         lastTemp = 255;
+        firstTimeout = false;
         return;
     }
 
@@ -95,13 +92,19 @@ void AirConditioner::doChecks(double roomTemperature, double coilTemperature) {
         toggleCompressor(true);
         switchTimeoutMillis = millis();
         lastTemp = roomTemperature;
+        firstTimeout = false;
         return;
     }
 
-    if (isCompressorRunning && roomTemperature <= (double) userTemperature - temperatureLowerLimit && isSwitchOffTimeoutOver()) {
+    if (isCompressorRunning && roomTemperature <= (double) userTemperature - temperatureLowerLimit && isSwitchTimeoutOver(0.5)) {
         toggleCompressor(false);
         switchTimeoutMillis = millis();
         lastTemp = 255;
+        firstTimeout = false;
         return;
     }
+}
+
+void AirConditioner::setFirstTimeout(bool hasTimeout) {
+    firstTimeout = hasTimeout;
 }
