@@ -24,9 +24,9 @@ struct SensorConfig {
 };
 
 struct Credentials {
-    const char* apiKey;
-    const char* secretKey;
-    const char* deviceId;
+    char apiKey[36];
+    char secretKey[73];
+    char deviceId[24];
 };
 
 Ultrasonic ultrasonic(ULTRASONIC_T, ULTRASONIC_E);
@@ -153,11 +153,11 @@ void recoverConfig() {
 }
 
 void saveCredentials() {
-    char bytes[sizeof(credentials)];
-    memcpy(bytes, (const char*)&credentials, sizeof(credentials));
+    char bytes[sizeof(Credentials)];
+    memcpy(bytes, (const char*)&credentials, sizeof(Credentials));
 
     File file = LittleFS.open(CREDENTIALS_FILE, "w");
-    file.write(bytes, sizeof(credentials));
+    file.write(bytes, sizeof(Credentials));
     file.close();
 }
 
@@ -171,7 +171,7 @@ void recoverCredentials() {
     Serial.println(file.readString());
     char bytes[file.size()];
     file.readBytes(bytes, file.size());
-    memcpy((char*) &credentials, bytes, file.size());
+    memcpy((char*) &credentials, bytes, sizeof(Credentials));
     file.close();
 }
 
@@ -193,9 +193,9 @@ void setup() {
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-    WiFiManagerParameter apiKey("apiKey", "SINRIC API KEY", NULL, 256);
-    WiFiManagerParameter secretKey("secretKey", "SINRIC SECRET KEY", NULL, 256);
-    WiFiManagerParameter deviceId("deviceId", "SINRIC DEVICE ID", NULL, 256);
+    WiFiManagerParameter apiKey("apiKey", "SINRIC API KEY", NULL, 36);
+    WiFiManagerParameter secretKey("secretKey", "SINRIC SECRET KEY", NULL, 73);
+    WiFiManagerParameter deviceId("deviceId", "SINRIC DEVICE ID", NULL, 24);
 
     manager.addParameter(&apiKey);
     manager.addParameter(&secretKey);
@@ -208,11 +208,10 @@ void setup() {
 
     if (shouldSaveCredentials) {
         Serial.println("Saving credentials");
-        credentials.apiKey = apiKey.getValue();
-        credentials.secretKey = secretKey.getValue();
-        credentials.deviceId = secretKey.getValue();
+        strncpy(credentials.apiKey, apiKey.getValue(), 36);
+        strncpy(credentials.secretKey, secretKey.getValue(), 73);
+        strncpy(credentials.deviceId, secretKey.getValue(), 24);
 
-        Serial.print("API KEY: ");
         saveCredentials();
     } else {
         Serial.println("Recovering Credentials.");
