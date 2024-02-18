@@ -13,7 +13,7 @@
 #define SWITCH_TIMEOUT_MINUTES 4
 #define TEMP_CHECK_INTERVAL_SECONDS 1
 #define TEMP_AVERAGE_PERIOD_SECONDS 15
-#define POWER_TIMEOUT_SECONDS 15
+#define POWER_TIMEOUT_SECONDS 10
 #define SAVE_CONFIG_SIGNATURE 0x2B
 #define SAVE_DATA_TRUE_VALUE 0x1C
 #define SAVE_DATA_FALSE_VALUE 0x1D
@@ -165,7 +165,7 @@ void loop() {
         analogWrite(BEEPER, 0);
     }
 
-    if (!remoteResumed && millis()-remoteTimeout > 650) {
+    if (!remoteResumed && millis()-remoteTimeout > 200) {
         remote.resume();
         remoteResumed = true;
     }
