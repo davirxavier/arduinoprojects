@@ -10,13 +10,13 @@
 #define MIN_TEMP 18
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
-#define SWITCH_TIMEOUT_MINUTES 5
+#define SWITCH_TIMEOUT_MINUTES 4
 #define TEMP_CHECK_INTERVAL_SECONDS 1
 #define TEMP_AVERAGE_PERIOD_SECONDS 15
 #define POWER_TIMEOUT_SECONDS 15
 #define SAVE_CONFIG_SIGNATURE 0x2B
-#define SAVE_DATA_TRUE_VALUE 0x1A
-#define SAVE_DATA_FALSE_VALUE 0x1B
+#define SAVE_DATA_TRUE_VALUE 0x1C
+#define SAVE_DATA_FALSE_VALUE 0x1D
 
 #define RECV_PIN A3
 #define MAIN_RELAY_PIN 3
@@ -108,6 +108,10 @@ void readConfig() {
 }
 
 void setup() {
+#ifdef IS_TEST_ENVIRONMENT
+    Serial.begin(9600);
+#endif
+
     isOn = false;
     beepActivated = true;
 
@@ -127,6 +131,12 @@ void setup() {
     savedAddress = getAddress();
     readConfig();
     ac.setFirstTimeout(!hasTimeout);
+
+#ifdef IS_TEST_ENVIRONMENT
+    Serial.print("Initial state: ");
+    Serial.print("Has timeout: ");
+    Serial.println(hasTimeout ? "true" : "false");
+#endif
 
     remote.enableIRIn();
     remoteTimeout = 0;
@@ -259,6 +269,11 @@ void loop() {
             tempsOverPeriod[currentTempOverPeriod] = readTemp();
             currentTempOverPeriod++;
             tempCheckTimer = millis();
+
+#ifdef IS_TEST_ENVIRONMENT
+            Serial.print("Current temp: ");
+            Serial.println(readTemp());
+#endif
         }
 
         updateDisplay();
@@ -312,7 +327,11 @@ void startBeep() {
 }
 
 double readTemp() {
+#ifdef IS_TEST_ENVIRONMENT
+    return tempSensor.getTemp();
+#else
     return tempSensor.getTemp() + TEMP_SENSOR_OFFSET;
+#endif
 }
 
 double readCoilTemp() {

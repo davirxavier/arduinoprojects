@@ -58,16 +58,12 @@ void AirConditioner::toggleCompressor(bool on) {
 
 void AirConditioner::start() {
     toggleFan(true);
-    switchTimeoutMillis = millis();
-
     isOn = true;
 }
 
 void AirConditioner::stop() {
     toggleCompressor(false);
     toggleFan(false);
-    switchTimeoutMillis = millis();
-
     isOn = false;
 }
 
