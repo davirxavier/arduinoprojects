@@ -2,8 +2,8 @@
 #include "IRremote.h"
 #include "AirConditioner.h"
 #include "AirConditionerRemote.h"
-#include "../lib/thermistor/Thermistor.h"
-#include "../lib/4Display/4Display.h"
+#include "thermistor.h"
+//#include "../lib/4Display/4Display.h"
 #include "EEPROM.h"
 
 #define MAX_TEMP 32
@@ -24,10 +24,11 @@
 #define TEMP_SENSOR A0
 #define BEEPER 10
 
-#define TEMP_SENSOR_OFFSET 9.08
+#define TEMP_SENSOR_OFFSET 4.08
 
 // Uncomment to enable test env
 // #define IS_TEST_ENVIRONMENT
+#define ENABLE_LOGGING
 
 #ifdef IS_TEST_ENVIRONMENT
     #define COMMAND_POWER 162
@@ -52,7 +53,7 @@ unsigned long tempCheckTimer;
 uint8_t userTemp;
 AirConditioner ac(MAIN_RELAY_PIN, FAN_RELAY_PIN);
 AirConditionerRemote acReader;
-Thermistor tempSensor(TEMP_SENSOR);
+THERMISTOR tempSensor(TEMP_SENSOR, 12000, 4150, 10000);
 double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
 uint8_t currentTempOverPeriod;
 
@@ -107,7 +108,7 @@ void readConfig() {
 }
 
 void setup() {
-#ifdef IS_TEST_ENVIRONMENT
+#ifdef ENABLE_LOGGING
     Serial.begin(9600);
 #endif
 
@@ -131,7 +132,7 @@ void setup() {
     readConfig();
     ac.setFirstTimeout(!hasTimeout);
 
-#ifdef IS_TEST_ENVIRONMENT
+#ifdef ENABLE_LOGGING
     Serial.print("Initial state: ");
     Serial.print("Has timeout: ");
     Serial.println(hasTimeout ? "true" : "false");
@@ -269,7 +270,7 @@ void loop() {
             currentTempOverPeriod++;
             tempCheckTimer = millis();
 
-#ifdef IS_TEST_ENVIRONMENT
+#ifdef ENABLE_LOGGING
             Serial.print("Current temp: ");
             Serial.println(readTemp());
 #endif
@@ -329,7 +330,8 @@ double readTemp() {
 #ifdef IS_TEST_ENVIRONMENT
     return tempSensor.getTemp();
 #else
-    return tempSensor.getTemp() + TEMP_SENSOR_OFFSET;
+//    return tempSensor.getTemp() + TEMP_SENSOR_OFFSET;
+    return tempSensor.read()/10.0;
 #endif
 }
 
