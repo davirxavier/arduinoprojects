@@ -20,10 +20,9 @@
 
 #define RECV_PIN A3
 #define MAIN_RELAY_PIN 3
-#define FAN_RELAY_PIN A0
-#define DEFROST_SENSOR A0
-#define TEMP_SENSOR A1
-#define BEEPER A2
+#define FAN_RELAY_PIN 4
+#define TEMP_SENSOR A0
+#define BEEPER 10
 
 #define TEMP_SENSOR_OFFSET 9.08
 
@@ -38,10 +37,10 @@
     #define COMMAND_TEMP 34
 #endif
 
-uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
-uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
-uint8_t DP_PIN = 11;
-FourDisplay display(POS_PINS, DISPLAY_PINS, DP_PIN);
+//uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
+//uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
+//uint8_t DP_PIN = 11;
+//FourDisplay display(POS_PINS, DISPLAY_PINS, DP_PIN);
 
 IRrecv remote(RECV_PIN);
 unsigned long remoteTimeout;
@@ -142,8 +141,8 @@ void setup() {
     remoteTimeout = 0;
     remoteResumed = false;
 
-    display.eraseAll();
-    display.turnAllOff();
+//    display.eraseAll();
+//    display.turnAllOff();
 
     pinMode(MAIN_RELAY_PIN, OUTPUT);
     pinMode(FAN_RELAY_PIN, OUTPUT);
@@ -296,13 +295,13 @@ void setUserTemp(uint8_t temp) {
 }
 
 void updateDisplay() {
-    if (showRoomTemp) {
-        display.write1(2, ((int)currentAvgTemp/10)%10, false);
-        display.write1(3, ((int)currentAvgTemp)%10, true);
-    } else {
-        display.write1(2, (userTemp/10)%10, false);
-        display.write1(3, userTemp % 10, false);
-    }
+//    if (showRoomTemp) {
+//        display.write1(2, ((int)currentAvgTemp/10)%10, false);
+//        display.write1(3, ((int)currentAvgTemp)%10, true);
+//    } else {
+//        display.write1(2, (userTemp/10)%10, false);
+//        display.write1(3, userTemp % 10, false);
+//    }
 }
 
 void turn() {
@@ -313,8 +312,8 @@ void turn() {
         ac.start();
     } else {
         ac.stop();
-        display.turnAllOff();
-        display.eraseAll();
+//        display.turnAllOff();
+//        display.eraseAll();
     }
 }
 
