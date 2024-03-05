@@ -25,11 +25,11 @@ public:
     double temperatureLowerLimit;
 
     uint8_t switchTimeoutMinutes;
+    bool isCompressorRunning;
 
 protected:
     double lastTemp;
     bool isOn;
-    bool isCompressorRunning;
     bool firstTimeout;
     unsigned long switchTimeoutMillis;
     void toggleCompressor(bool on);

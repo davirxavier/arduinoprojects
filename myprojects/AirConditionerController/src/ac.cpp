@@ -2,7 +2,6 @@
 #include "IRremote.h"
 #include "AirConditioner.h"
 #include "AirConditionerRemote.h"
-#include "thermistor.h"
 //#include "../lib/4Display/4Display.h"
 #include "EEPROM.h"
 
@@ -58,6 +57,11 @@
     #define TEMP_SENSOR_SERIES_RESISTOR 10000
 #endif
 
+#define THERMISTOR_CONSTANT_A 0.00102192985237609
+#define THERMISTOR_CONSTANT_B 0.000241453242427025
+#define THERMISTOR_CONSTANT_C -0.000000247620754758454
+#define THERMISTOR_CONSTANT_D 0.000000165394923419592
+
 //uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
 //uint8_t DISPLAY_PINS[4] {255, 255, 12, 13};
 //uint8_t DP_PIN = 11;
@@ -73,7 +77,6 @@ unsigned long tempCheckTimer;
 uint8_t userTemp;
 AirConditioner ac(MAIN_RELAY_PIN, FAN_RELAY_PIN);
 AirConditionerRemote acReader;
-THERMISTOR tempSensor(TEMP_SENSOR, TEMP_SENSOR_RESISTANCE, TEMP_SENSOR_BETA, TEMP_SENSOR_SERIES_RESISTOR);
 double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
 uint8_t currentTempOverPeriod;
 
@@ -350,14 +353,22 @@ void startBeep() {
     }
 }
 
+float f_ReadTemp_ThABC(byte TPin, long THERMISTOR, float R1, float A, float B, float C, float D) {
+    float res, temp;
+    res = R1/(1023.0/((float)analogRead(TPin)) - 1.0);
+    res = log(res);
+    temp = A + B*res + C*res*res + D*res*res*res;
+    temp = 1.0/temp;
+    temp -= 273.15;
+    return temp;
+}
+
 double readTemp() {
-#ifdef IS_TEST_ENVIRONMENT
-    const float BETA = 3950;
-    int analogValue = analogRead(TEMP_SENSOR);
-    return 1 / (log(1 / (1023. / analogValue - 1)) / BETA + 1.0 / 298.15) - 273.15;
-#else
-    return tempSensor.read()/10.0;
-#endif
+    return f_ReadTemp_ThABC(TEMP_SENSOR, TEMP_SENSOR_RESISTANCE, TEMP_SENSOR_SERIES_RESISTOR,
+                            THERMISTOR_CONSTANT_A,
+                            THERMISTOR_CONSTANT_B,
+                            THERMISTOR_CONSTANT_C,
+                            THERMISTOR_CONSTANT_D);
 }
 
 double readCoilTemp() {
