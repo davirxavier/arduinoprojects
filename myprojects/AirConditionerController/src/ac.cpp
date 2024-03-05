@@ -18,17 +18,27 @@
 #define SAVE_DATA_TRUE_VALUE 0x1C
 #define SAVE_DATA_FALSE_VALUE 0x1D
 
-#define RECV_PIN A3
-#define MAIN_RELAY_PIN 3
-#define FAN_RELAY_PIN 4
-#define TEMP_SENSOR A0
-#define BEEPER 10
+// Uncomment to enable test env
+//#define IS_TEST_ENVIRONMENT
+#define ENABLE_LOGGING
+
+#ifdef IS_TEST_ENVIRONMENT
+    #define RECV_PIN A3
+    #define MAIN_RELAY_PIN 3
+    #define FAN_RELAY_PIN A0
+    #define TEMP_SENSOR A1
+    #define BEEPER A2
+#else
+    #define RECV_PIN A3
+    #define MAIN_RELAY_PIN 3
+    #define FAN_RELAY_PIN 4
+    #define TEMP_SENSOR A0
+    #define BEEPER 10
+#endif
 
 #define TEMP_SENSOR_OFFSET 4.08
 
-// Uncomment to enable test env
-// #define IS_TEST_ENVIRONMENT
-#define ENABLE_LOGGING
+#define VERBOSE_SENSOR_ENABLED 0
 
 #ifdef IS_TEST_ENVIRONMENT
     #define COMMAND_POWER 162
@@ -36,6 +46,16 @@
     #define COMMAND_PLUS 2
     #define COMMAND_BEEP 226
     #define COMMAND_TEMP 34
+#endif
+
+#ifdef IS_TEST_ENVIRONMENT
+    #define TEMP_SENSOR_BETA 3950
+    #define TEMP_SENSOR_RESISTANCE 10000
+    #define TEMP_SENSOR_SERIES_RESISTOR 10000
+#else
+    #define TEMP_SENSOR_BETA 4150
+    #define TEMP_SENSOR_RESISTANCE 12000
+    #define TEMP_SENSOR_SERIES_RESISTOR 10000
 #endif
 
 //uint8_t POS_PINS[7] = {4, 5, 6, 7, 8, 9, 10};
@@ -53,7 +73,7 @@ unsigned long tempCheckTimer;
 uint8_t userTemp;
 AirConditioner ac(MAIN_RELAY_PIN, FAN_RELAY_PIN);
 AirConditionerRemote acReader;
-THERMISTOR tempSensor(TEMP_SENSOR, 12000, 4150, 10000);
+THERMISTOR tempSensor(TEMP_SENSOR, TEMP_SENSOR_RESISTANCE, TEMP_SENSOR_BETA, TEMP_SENSOR_SERIES_RESISTOR);
 double tempsOverPeriod[TEMP_AVERAGE_PERIOD_SECONDS];
 uint8_t currentTempOverPeriod;
 
@@ -271,8 +291,12 @@ void loop() {
             tempCheckTimer = millis();
 
 #ifdef ENABLE_LOGGING
-            Serial.print("Current temp: ");
+            Serial.print("Current room temp: ");
             Serial.println(readTemp());
+            Serial.print("Current user temp: ");
+            Serial.println(userTemp);
+            Serial.print("Compressor on: ");
+            Serial.println(ac.isCompressorRunning);
 #endif
         }
 
@@ -328,9 +352,10 @@ void startBeep() {
 
 double readTemp() {
 #ifdef IS_TEST_ENVIRONMENT
-    return tempSensor.getTemp();
+    const float BETA = 3950;
+    int analogValue = analogRead(TEMP_SENSOR);
+    return 1 / (log(1 / (1023. / analogValue - 1)) / BETA + 1.0 / 298.15) - 273.15;
 #else
-//    return tempSensor.getTemp() + TEMP_SENSOR_OFFSET;
     return tempSensor.read()/10.0;
 #endif
 }
