@@ -50,11 +50,9 @@
 #ifdef IS_TEST_ENVIRONMENT
     #define TEMP_SENSOR_BETA 3950
     #define TEMP_SENSOR_RESISTANCE 10000
-    #define TEMP_SENSOR_SERIES_RESISTOR 10000
 #else
     #define TEMP_SENSOR_BETA 4150
-    #define TEMP_SENSOR_RESISTANCE 12000
-    #define TEMP_SENSOR_SERIES_RESISTOR 10000
+    #define TEMP_SENSOR_RESISTANCE 10000
 #endif
 
 #define THERMISTOR_CONSTANT_A 0.00102192985237609
@@ -353,9 +351,11 @@ void startBeep() {
     }
 }
 
-float f_ReadTemp_ThABC(byte TPin, long THERMISTOR, float R1, float A, float B, float C, float D) {
+float f_ReadTemp_ThABC(byte TPin, float R1, float A, float B, float C, float D) {
+    int ar = analogRead(TPin);
+
     float res, temp;
-    res = R1/(1023.0/((float)analogRead(TPin)) - 1.0);
+    res = R1/(1023.0/((float) map(ar, 0, 1023, 1023, 0)) - 1.0);
     res = log(res);
     temp = A + B*res + C*res*res + D*res*res*res;
     temp = 1.0/temp;
@@ -364,7 +364,7 @@ float f_ReadTemp_ThABC(byte TPin, long THERMISTOR, float R1, float A, float B, f
 }
 
 double readTemp() {
-    return f_ReadTemp_ThABC(TEMP_SENSOR, TEMP_SENSOR_RESISTANCE, TEMP_SENSOR_SERIES_RESISTOR,
+    return f_ReadTemp_ThABC(TEMP_SENSOR, TEMP_SENSOR_RESISTANCE,
                             THERMISTOR_CONSTANT_A,
                             THERMISTOR_CONSTANT_B,
                             THERMISTOR_CONSTANT_C,
