@@ -4,8 +4,8 @@
 #include "WiFiClientSecure.h"
 #include "UniversalTelegramBot.h"
 
-#define BUTTON_PIN 3
 #define RESET_CONFIG_PIN 2
+#define WIRELESS_DOORBELL_PIN 5
 
 #define AP_NAME "ESP-DOORBELL-0842"
 #define AP_PASSWORD "admin13246"
@@ -25,6 +25,7 @@ Credentials credentials{};
 X509List cert(TELEGRAM_CERTIFICATE_ROOT);
 WiFiClientSecure wiFiClientSecure;
 WiFiManager manager;
+unsigned long startedTime;
 
 void saveCredentials() {
     char bytes[sizeof(Credentials)];
@@ -66,9 +67,17 @@ void IRAM_ATTR resetConfig() {
 
 void setup() {
     Serial.begin(9600);
+    startedTime = millis();
 
     pinMode(RESET_CONFIG_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(RESET_CONFIG_PIN), resetConfig, FALLING);
+    delay(10);
+    if (digitalRead(RESET_CONFIG_PIN) == LOW) {
+        resetConfig();
+        return;
+    }
+
+    pinMode(WIRELESS_DOORBELL_PIN, OUTPUT);
+    digitalWrite(WIRELESS_DOORBELL_PIN, HIGH);
 
     Serial.print("Connecting");
 
@@ -102,6 +111,14 @@ void setup() {
     wiFiClientSecure.setTrustAnchors(&cert);
     UniversalTelegramBot bot(credentials.apiKey, wiFiClientSecure);
     bot.sendMessage(credentials.chatId, F(NOTIF_TEXT));
+
+    unsigned long timeDiff = millis()-startedTime;
+    if (timeDiff < 500) {
+        delay(timeDiff);
+    }
+    digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
+
+    ESP.deepSleep(0);
 }
 
 void loop() {
