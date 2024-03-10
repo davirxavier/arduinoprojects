@@ -3,13 +3,14 @@
 #include "WiFiManager.h"
 #include "WiFiClientSecure.h"
 #include "UniversalTelegramBot.h"
+#include "ArduinoJson.h"
 
-#define RESET_CONFIG_PIN 2
-#define WIRELESS_DOORBELL_PIN 5
+#define RESET_CONFIG_PIN 12
+#define WIRELESS_DOORBELL_PIN 13
 
 #define AP_NAME "ESP-DOORBELL-0842"
 #define AP_PASSWORD "admin13246"
-#define APIKEY_SIZE 46
+#define APIKEY_SIZE 47
 #define CHAT_ID_SIZE 20
 #define CREDS_FILE "credentials.txt"
 #define NOTIF_TEXT "A campainha está tocando."
@@ -28,11 +29,20 @@ WiFiManager manager;
 unsigned long startedTime;
 
 void saveCredentials() {
-    char bytes[sizeof(Credentials)];
-    memcpy(bytes, (const char*)&credentials, sizeof(Credentials));
-
     File file = LittleFS.open(CREDS_FILE, "w");
-    file.write(bytes, sizeof(Credentials));
+    if (!file) {
+        Serial.println(F("Failed to create file"));
+        return;
+    }
+
+    JsonDocument doc;
+    doc["apiKey"] = credentials.apiKey;
+    doc["chatId"] = credentials.chatId;
+
+    if (serializeJson(doc, file) == 0) {
+        Serial.println(F("Failed to write to file"));
+    }
+
     file.close();
 }
 
@@ -43,10 +53,18 @@ void recoverCredentials() {
     }
 
     File file = LittleFS.open(CREDS_FILE, "r");
-    Serial.println(file.readString());
-    char bytes[file.size()];
-    file.readBytes(bytes, file.size());
-    memcpy((char*) &credentials, bytes, sizeof(Credentials));
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    if (error)
+        Serial.println(F("Failed to read file, using default configuration"));
+
+    strlcpy(credentials.apiKey,
+            doc["apiKey"] | "",
+            sizeof(credentials.apiKey));
+    strlcpy(credentials.chatId,
+            doc["chatId"] | "",
+            sizeof(credentials.chatId));
+
     file.close();
 }
 
@@ -68,6 +86,7 @@ void IRAM_ATTR resetConfig() {
 void setup() {
     Serial.begin(9600);
     startedTime = millis();
+    LittleFS.begin();
 
     pinMode(RESET_CONFIG_PIN, INPUT_PULLUP);
     delay(10);
@@ -84,7 +103,7 @@ void setup() {
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
     WiFiManagerParameter apiKey("apiKey", "Telegram api key", NULL, APIKEY_SIZE);
-    WiFiManagerParameter chatId("chatId", "Telegram chat id", NULL, CHAT_ID_SIZE);
+    WiFiManagerParameter chatId("chatId", "Telegram chat id", NULL, 100);
 
     manager.addParameter(&apiKey);
     manager.addParameter(&chatId);
@@ -104,20 +123,27 @@ void setup() {
         Serial.println("Recovering Credentials.");
 
         recoverCredentials();
-        Serial.print("API KEY: ");
-        Serial.println(credentials.apiKey);
     }
 
+    Serial.print("API KEY: ");
+    Serial.println(credentials.apiKey);
+    Serial.print("CHATID: ");
+    Serial.println(credentials.chatId);
+
+    configTime(0, 0, "pool.ntp.org");
     wiFiClientSecure.setTrustAnchors(&cert);
     UniversalTelegramBot bot(credentials.apiKey, wiFiClientSecure);
-    bot.sendMessage(credentials.chatId, F(NOTIF_TEXT));
+    bot.sendMessage(credentials.chatId, NOTIF_TEXT);
 
     unsigned long timeDiff = millis()-startedTime;
+    Serial.println("Message sent.");
     if (timeDiff < 500) {
+        Serial.println(timeDiff);
         delay(timeDiff);
     }
     digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
 
+    Serial.println("Going to sleep.");
     ESP.deepSleep(0);
 }
 
