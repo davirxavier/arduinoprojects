@@ -5,7 +5,7 @@
 #include "secrets.h"
 
 #define ENABLE_RC
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 #ifdef ENABLE_RC
 #include "RCSwitch.h"
@@ -27,7 +27,7 @@ String kayCardIds[] = KEYCARD_IDS;
 
 #define SS_PIN 10 //PINO SDA
 #define RST_PIN 9 //PINO DE RESET
-#define LED_PIN 8
+#define LED_PIN 5
 #define RELAY_PIN A0
 
 boolean isOpen = false;
@@ -81,13 +81,13 @@ void toggle(boolean open) {
 #endif
 
     digitalWrite(RELAY_PIN, open ? HIGH : LOW);
-    digitalWrite(LED_PIN, open ? HIGH : LOW);
     isOpen = open;
 
     delay(2000);
 }
 
 void unauthorize() {
+    digitalWrite(LED_PIN, LOW);
     userHasUnlocked = false;
     manualLock = true;
     setLocked(true);
@@ -95,6 +95,7 @@ void unauthorize() {
 }
 
 void authorize() {
+    digitalWrite(LED_PIN, HIGH);
     userHasUnlocked = true;
     setLocked(false);
     toggle(true);
