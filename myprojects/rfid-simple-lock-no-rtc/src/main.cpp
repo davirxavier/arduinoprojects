@@ -2,148 +2,217 @@
 #include <SPI.h>
 #include "MFRC522.h"
 #include "EEPROMex.h"
-#include "RtcDS1302.h"
+#include "secrets.h"
 
-#define KEY1 "4D:BC:0D:32"
-#define KEY2 "C5:7F:AC:AC"
+#define ENABLE_RC
+#define ENABLE_LOGGING
+
+#ifdef ENABLE_RC
+#include "RCSwitch.h"
+
+#define RC_PIN 2
+
+unsigned long disableCodes[] = DISABLE_CODES;
+unsigned long enableCodes[] = ENABLE_CODES;
+
+RCSwitch rc = RCSwitch();
+#endif
+
+String kayCardIds[] = KEYCARD_IDS;
+
+#define DELAY_TRIES_MS 15000
+#define TIMEOUT_MS 40000
+#define EEPROM_CHECK_VAL 0xB4
+#define EEPROM_LOCKED_BIT 2
 
 #define SS_PIN 10 //PINO SDA
 #define RST_PIN 9 //PINO DE RESET
 #define LED_PIN 8
 #define RELAY_PIN A0
 
-#define EEPROM_CHECK_VAL 0xA6
+boolean isOpen = false;
+boolean isLocked = false;
+boolean userHasUnlocked = false;
+boolean userHasTimedOut = false;
+boolean manualLock = false;
 
-ThreeWire rtcwire(7, A6, A2);
-RtcDS1302<ThreeWire> rtc(rtcwire);
 MFRC522 rfid(SS_PIN, RST_PIN); //PASSAGEM DE PARÂMETROS REFERENTE AOS PINOS
+int eepromAddr = 1;
 
-short booleansAddr = 0;
+void searchEeprom() {
+#ifdef ENABLE_LOGGING
+    Serial.println("Searching EEPROM for address.");
+#endif
 
-unsigned short isCountingBit = 2;
-
-unsigned short lockedBit = 1;
-bool locked = false;
-unsigned int timeToLock = 47;
-
-unsigned short timeoutBit = 0;
-bool timeout;
-unsigned int defaultTimeout = 30;
-
-bool readSuccessfully = false;
-
-void searchNextMemorySlot() {
-    int addr = 0;
+    int addr = 1;
     for (int i = 1; i < 1000; i++) {
         if (EEPROM.read(i) == EEPROM_CHECK_VAL) {
-            Serial.print("Found EEPROM marker at address: ");
+#ifdef ENABLE_LOGGING
+            Serial.print("Found EEPROM marker at position ");
             Serial.println(i);
+#endif
             addr = i;
             break;
         }
     }
 
-    booleansAddr = addr-1;
+#ifdef ENABLE_LOGGING
+    Serial.print("Setting current EEPROM address to ");
+    Serial.println(addr-1);
+#endif
+    eepromAddr = addr-1;
     EEPROM.update(addr, EEPROM_CHECK_VAL);
 }
 
-void setCounting(bool val) {
-    EEPROM.updateBit(booleansAddr, lockedBit, val);
-    locked = val;
+void setLocked(boolean locked) {
+#ifdef ENABLE_LOGGING
+    Serial.print("Setting hard lock status to ");
+    Serial.println(locked ? "locked" : "open");
+#endif
+
+    EEPROM.updateBit(eepromAddr, EEPROM_LOCKED_BIT, locked);
+    isLocked = locked;
 }
 
-bool readCounting() {
-    return EEPROM.readBit(booleansAddr, isCountingBit);
+void toggle(boolean open) {
+#ifdef ENABLE_LOGGING
+    Serial.print("Setting lock to ");
+    Serial.println(open ? "open" : "closed");
+#endif
+
+    digitalWrite(RELAY_PIN, open ? HIGH : LOW);
+    digitalWrite(LED_PIN, open ? HIGH : LOW);
+    isOpen = open;
+
+    delay(2000);
 }
 
-
-void setLocked(bool val) {
-    if (locked != val) {
-        EEPROM.updateBit(booleansAddr, lockedBit, val);
-    }
-    locked = val;
+void unauthorize() {
+    userHasUnlocked = false;
+    manualLock = true;
+    setLocked(true);
+    toggle(false);
 }
 
-bool readLocked() {
-    return EEPROM.readBit(booleansAddr, lockedBit);
-}
-
-void setHasTimeout(bool hasTimeout) {
-    if (timeout != hasTimeout) {
-        EEPROM.updateBit(booleansAddr, timeoutBit, !hasTimeout);
-    }
-    timeout = hasTimeout;
-}
-
-bool readTimeout() {
-    return !EEPROM.readBit(booleansAddr, timeoutBit);
-}
-
-void toggle(bool open) {
-    if (open) {
-        analogWrite(RELAY_PIN, 255);
-        digitalWrite(LED_PIN, HIGH);
-    } else {
-        analogWrite(RELAY_PIN, 0);
-        digitalWrite(LED_PIN, LOW);
-    }
+void authorize() {
+    userHasUnlocked = true;
+    setLocked(false);
+    toggle(true);
 }
 
 void setup() {
+#ifdef ENABLE_LOGGING
+    Serial.begin(9600);
+    Serial.println("Starting.");
+#endif
+
+    pinMode(RELAY_PIN, OUTPUT);
     pinMode(LED_PIN, OUTPUT);
-    searchNextMemorySlot();
 
-    rtc.Begin();
+#ifdef ENABLE_RC
+    rc.enableReceive(digitalPinToInterrupt(RC_PIN));
+#endif
 
-    SPI.begin(); //INICIALIZA O BARRAMENTO SPI
-    rfid.PCD_Init(); //INICIALIZA MFRC522
-    rfid.PCD_SetAntennaGain(rfid.RxGain_max);
+    SPI.begin();
+    rfid.PCD_Init();
 
-    timeout = readTimeout();
-    locked = readLocked();
-
-    toggle(!locked);
-
-    if (!locked && !readCounting()) {
-        setCounting(true);
-    }
+    isLocked = EEPROM.readBit(eepromAddr, EEPROM_LOCKED_BIT);
+    toggle(!isLocked);
 }
 
 void loop() {
-    if (!readSuccessfully && millis() > timeToLock*1000) {
-        toggle(false);
+#ifdef ENABLE_RC
+    if (manualLock) {
+        return;
+    }
+#endif
+
+    if (!userHasTimedOut && !userHasUnlocked && millis() > TIMEOUT_MS) {
+#ifdef ENABLE_LOGGING
+        Serial.println("Timeout for authentication, locking system.");
+#endif
+
+        userHasTimedOut = true;
         setLocked(true);
-    }
-
-    if (!readSuccessfully && timeout) {
-        delay(defaultTimeout * 1000);
-        setHasTimeout(false);
-    }
-
-    if (!readSuccessfully && (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial())) //VERIFICA SE O CARTÃO PRESENTE NO LEITOR É DIFERENTE DO ÚLTIMO CARTÃO LIDO. CASO NÃO SEJA, FAZ
-        return; //RETORNA PARA LER NOVAMENTE
-
-    /***INICIO BLOCO DE CÓDIGO RESPONSÁVEL POR GERAR A TAG RFID LIDA***/
-    String strID = "";
-    for (byte i = 0; i < 4; i++) {
-        strID +=
-                (rfid.uid.uidByte[i] < 0x10 ? "0" : "") +
-                String(rfid.uid.uidByte[i], HEX) +
-                (i!=3 ? ":" : "");
-    }
-    strID.toUpperCase();
-    /***FIM DO BLOCO DE CÓDIGO RESPONSÁVEL POR GERAR A TAG RFID LIDA***/
-
-    if (strID == F(KEY1) || strID == F(KEY2)) {
-        toggle(true);
-        readSuccessfully = true;
-        setLocked(false);
-        setCounting(false);
-    } else {
         toggle(false);
-        setHasTimeout(true);
+        return;
     }
 
-    rfid.PICC_HaltA(); //PARADA DA LEITURA DO CARTÃO
-    rfid.PCD_StopCrypto1(); //PARADA DA CRIPTOGRAFIA NO PCD
+#ifdef ENABLE_RC
+    if (rc.available()) {
+        unsigned long val = rc.getReceivedValue();
+
+#ifdef ENABLE_LOGGING
+        Serial.print("Read RC value ");
+        Serial.println(val);
+#endif
+
+        if (!isLocked) {
+            for (unsigned long code : disableCodes) {
+                if (code == val) {
+#ifdef ENABLE_LOGGING
+                    Serial.println("Found RC code for disabling");
+#endif
+                    unauthorize();
+                    break;
+                }
+            }
+        }
+
+        if (!userHasUnlocked) {
+            for (unsigned long code : enableCodes) {
+                if (code == val) {
+#ifdef ENABLE_LOGGING
+                    Serial.println("Found RC code for enabling");
+#endif
+                    authorize();
+                    break;
+                }
+            }
+        }
+
+#ifdef ENABLE_LOGGING
+        Serial.println("Resetting RC.");
+#endif
+        rc.resetAvailable();
+    }
+#endif
+
+    if (!userHasUnlocked && rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+#ifdef ENABLE_LOGGING
+        Serial.println("New RFID card present for reading");
+#endif
+
+        String readId = "";
+        for (byte i = 0; i < rfid.uid.size; i++)
+        {
+            readId.concat(String(rfid.uid.uidByte[i] < 0x10 ? " 0" : ":"));
+            readId.concat(String(rfid.uid.uidByte[i], HEX));
+        }
+
+#ifdef ENABLE_LOGGING
+        Serial.print("Read RFID UID: ");
+        Serial.println(readId);
+#endif
+
+        bool found = false;
+        for (String id : kayCardIds) {
+            if (id == readId) {
+#ifdef ENABLE_LOGGING
+                Serial.println("RFID UID is authorized");
+#endif
+                found = true;
+                break;
+            }
+        }
+
+        if (found) {
+            authorize();
+        } else {
+            unauthorize();
+        }
+
+        rfid.PICC_HaltA();
+        rfid.PCD_StopCrypto1();
+    }
 }
