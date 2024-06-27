@@ -82,8 +82,6 @@ void toggle(boolean open) {
 
     digitalWrite(RELAY_PIN, open ? HIGH : LOW);
     isOpen = open;
-
-    delay(2000);
 }
 
 void unauthorize() {
@@ -92,6 +90,8 @@ void unauthorize() {
     manualLock = true;
     setLocked(true);
     toggle(false);
+
+    delay(2000);
 }
 
 void authorize() {
@@ -99,6 +99,8 @@ void authorize() {
     userHasUnlocked = true;
     setLocked(false);
     toggle(true);
+
+    delay(2000);
 }
 
 void setup() {
