@@ -91,7 +91,7 @@ void unauthorize() {
     setLocked(true);
     toggle(false);
 
-    delay(2000);
+    delay(1500);
 }
 
 void authorize() {
@@ -100,7 +100,7 @@ void authorize() {
     setLocked(false);
     toggle(true);
 
-    delay(2000);
+    delay(1500);
 }
 
 void setup() {
@@ -118,18 +118,13 @@ void setup() {
 
     SPI.begin();
     rfid.PCD_Init();
+    rfid.PCD_SetAntennaGain(rfid.RxGain_max);
 
     isLocked = EEPROM.readBit(eepromAddr, EEPROM_LOCKED_BIT);
     toggle(!isLocked);
 }
 
 void loop() {
-#ifdef ENABLE_RC
-    if (manualLock) {
-        return;
-    }
-#endif
-
     if (!userHasTimedOut && !userHasUnlocked && millis() > TIMEOUT_MS) {
 #ifdef ENABLE_LOGGING
         Serial.println("Timeout for authentication, locking system.");
@@ -178,6 +173,12 @@ void loop() {
         Serial.println("Resetting RC.");
 #endif
         rc.resetAvailable();
+    }
+#endif
+
+#ifdef ENABLE_RC
+    if (manualLock) {
+        return;
     }
 #endif
 
