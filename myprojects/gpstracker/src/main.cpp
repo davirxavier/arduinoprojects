@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
+#include "../../custom-libs/crypto-helper.h"
+#include "Base64.h"
+#include "Crypto.h"
 #include "webServer.h"
 #include "fetch.h"
 #include "timeSync.h"
@@ -23,6 +26,7 @@ TinyGsmClient gsm_client(modem);
 
 bool ran;
 unsigned long runCount;
+char encryptionKey[33];
 
 void writeRunCount() {
 #ifdef ENABLE_LOGGING
@@ -111,6 +115,10 @@ void setup() {
 
     ran = false;
     timeSync.begin();
+
+    char keyEncoded[] = ENCRYPTION_KEY;
+    int keyEncodedLength = sizeof(keyEncoded);
+    Base64.decode(encryptionKey, keyEncoded, keyEncodedLength);
 }
 
 void loop() {
@@ -128,8 +136,10 @@ void loop() {
 #endif
 
         fetch.begin(path);
-        fetch.addHeader("content-type", "application/json");
-        int response = fetch.PATCH(String() + R"({"lat": ")" + "12.032146" + R"(", "lon": ")" + String(random(-150, 150)) + "." + String(random(100000, 999999)) + "\"}");
+        fetch.addHeader("content-type", "text/plain");
+        String body = String() + R"({"lat": ")" + "12.032146" + R"(", "lon": ")" + String(random(-150, 150)) + "." + String(random(100000, 999999)) + "\"}";
+        String bodyEncrypted = "\"" + cryptoHelperEncrypt(body, encryptionKey) + "\"";
+        int response = fetch.PUT(bodyEncrypted);
 
 #ifdef ENABLE_LOGGING
         Serial.printf("Set val, response status: %s\n", String(response).c_str());
