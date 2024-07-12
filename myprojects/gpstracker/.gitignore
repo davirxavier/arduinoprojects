@@ -1,3 +1,4 @@
 src/secrets.h
 .pio
 .idea
+data/env_config

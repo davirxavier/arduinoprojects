@@ -2,7 +2,7 @@
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
 #include "../../custom-libs/crypto-helper.h"
-#include "Base64.h"
+#include "config_utils.h"
 #include "Crypto.h"
 #include "webServer.h"
 #include "fetch.h"
@@ -26,7 +26,7 @@ TinyGsmClient gsm_client(modem);
 
 bool ran;
 unsigned long runCount;
-char encryptionKey[33];
+Config config;
 
 void writeRunCount() {
 #ifdef ENABLE_LOGGING
@@ -71,9 +71,19 @@ void setup() {
 #ifdef ENABLE_LOGGING
     Serial.begin(115200);
     Serial.println("Initializing modem...");
+    Serial.println("Parsing config...");
 #endif
 
     readRunCount();
+
+    config = getConfig();
+    if (!config.parseSuccess || !config.decryptionSuccess) {
+#ifdef ENABLE_LOGGING
+        Serial.println(!config.parseSuccess ? "Error parsing config JSON, shutting down." : "Error decrypting config, shutting down.");
+#endif
+        reset(false);
+        return;
+    }
 
 #ifdef USE_WIFI
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -115,10 +125,6 @@ void setup() {
 
     ran = false;
     timeSync.begin();
-
-    char keyEncoded[] = ENCRYPTION_KEY;
-    int keyEncodedLength = sizeof(keyEncoded);
-    Base64.decode(encryptionKey, keyEncoded, keyEncodedLength);
 }
 
 void loop() {
@@ -128,7 +134,7 @@ void loop() {
         Serial.println("Ready, setting val in firebase.");
 #endif
 
-        String path = String(DATABASE_URL) + "/" + PATH_PREFIX + "/" + USER_KEY + "/" + VEHICLE_UID + ".json";
+        String path = String(config.databaseUrl) + "/" + config.userKey + "/" + config.vehicleUid + ".json";
 
 #ifdef ENABLE_LOGGING
         Serial.print("Path: ");
@@ -136,12 +142,14 @@ void loop() {
 #endif
 
         fetch.begin(path);
-        fetch.addHeader("content-type", "text/plain");
+        fetch.addHeader("content-type", "text/plain"); // TODO real coords
         String body = String() + R"({"lat": ")" + "12.032146" + R"(", "lon": ")" + String(random(-150, 150)) + "." + String(random(100000, 999999)) + "\"}";
-        String bodyEncrypted = "\"" + cryptoHelperEncrypt(body, encryptionKey) + "\"";
+        String bodyEncrypted = "\"" + cryptoHelperEncrypt(body, config.encryptionKey.c_str()) + "\"";
         int response = fetch.PUT(bodyEncrypted);
 
 #ifdef ENABLE_LOGGING
+        Serial.printf("Encryption key: %s\n", config.encryptionKey.c_str());
+        Serial.printf("Body: %s\n", bodyEncrypted.c_str());
         Serial.printf("Set val, response status: %s\n", String(response).c_str());
 #endif
 
