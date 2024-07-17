@@ -15,8 +15,7 @@
 #define TINY_GSM_MODEM_SIM800
 #include <TinyGsmClient.h>
 #include <SoftwareSerial.h>
-SoftwareSerial SerialAT(14, 12);  // RX, TX
-
+SoftwareSerial SerialAT(14, 13);  // RX, TX
 TinyGsm modem(SerialAT);
 TinyGsmClient gsm_client(modem);
 #endif
@@ -26,7 +25,7 @@ TinyGsmClient gsm_client(modem);
 
 bool ran;
 unsigned long runCount;
-Config config;
+VehicleConfig config;
 
 void writeRunCount() {
 #ifdef ENABLE_LOGGING
@@ -119,8 +118,6 @@ void setup() {
     Serial.print("Modem Info:");
     Serial.println(modemInfo);
 #endif
-
-    fbdo.setGSMClient(&gsm_client, &modem, "", "", "", "");
 #endif
 
     ran = false;

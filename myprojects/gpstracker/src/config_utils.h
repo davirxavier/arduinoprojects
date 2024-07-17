@@ -9,7 +9,7 @@
 #include "secrets.h"
 #include "Base64.h"
 
-struct Config {
+struct VehicleConfig {
     String databaseUrl;
     String encryptionKey;
     String userKey;
@@ -18,7 +18,7 @@ struct Config {
     boolean decryptionSuccess;
 };
 
-Config getConfig() {
+VehicleConfig getConfig() {
     File envFile = LittleFS.open(F("/env_config"), "r");
     char data[envFile.size()];
     envFile.readBytes(data, envFile.size());
@@ -53,7 +53,7 @@ Config getConfig() {
                                                                              tagDecoded);
 
 
-    Config config;
+    VehicleConfig config;
     config.decryptionSuccess = decryptionSuccess;
 
     if (!decryptionSuccess) {
