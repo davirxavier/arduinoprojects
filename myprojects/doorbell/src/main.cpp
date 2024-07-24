@@ -4,7 +4,6 @@
 #include "WiFiClientSecure.h"
 #include "FastBot.h"
 #include "ArduinoJson.h"
-#include "Bounce2.h"
 
 #define RESET_CONFIG_PIN 14
 #define WIRELESS_DOORBELL_PIN 12
@@ -17,7 +16,7 @@
 #define CREDS_FILE "credentials.txt"
 #define NOTIF_TEXT "A campainha está tocando."
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 #ifdef ENABLE_LOGGING
 #define SERIAL_LOG_LN(str) Serial.println(str)
@@ -37,10 +36,10 @@ struct Credentials {
 Credentials credentials{};
 WiFiClientSecure wiFiClientSecure;
 WiFiManager manager;
-unsigned long startedTime;
-boolean hasTimeout;
-Bounce2::Button button = Bounce2::Button();
 FastBot* bot;
+
+volatile boolean hasSignal;
+unsigned long lastActivated;
 
 void saveCredentials() {
     File file = LittleFS.open(CREDS_FILE, "w");
@@ -97,11 +96,29 @@ void IRAM_ATTR resetConfig() {
     resetFunc();
 }
 
+void IRAM_ATTR button_interrupt()
+{
+    SERIAL_LOG_LN("Interrupt activated.");
+
+    digitalWrite(WIRELESS_DOORBELL_PIN, HIGH);
+    delay(50);
+    digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
+
+    hasSignal = true;
+}
+
 void setup() {
 #ifdef ENABLE_LOGGING
     Serial.begin(9600);
 #endif
-    startedTime = millis();
+    pinMode(WIRELESS_DOORBELL_PIN, OUTPUT);
+    digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
+
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), button_interrupt, FALLING);
+
+    lastActivated = 0;
+    hasSignal = false;
     LittleFS.begin();
 
     pinMode(RESET_CONFIG_PIN, INPUT_PULLUP);
@@ -110,9 +127,6 @@ void setup() {
         resetConfig();
         return;
     }
-
-    pinMode(WIRELESS_DOORBELL_PIN, OUTPUT);
-    digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
 
     SERIAL_LOG("Connecting");
 
@@ -147,32 +161,17 @@ void setup() {
 
     configTime(0, 0, "pool.ntp.org");
     bot = new FastBot(credentials.apiKey);
-
-    button.attach(BUTTON_PIN, INPUT_PULLUP);
-    button.interval(10);
-    button.setPressedState(LOW);
-
-    hasTimeout = false;
 }
 
 void loop() {
-    //bot->tick();
-    button.update();
+    bot->tick();
 
-    if (bot != nullptr && button.pressed()) {
+    if (bot != nullptr && hasSignal && millis() - lastActivated > 5000) {
         SERIAL_LOG_LN("Sending message.");
         bot->sendMessage(NOTIF_TEXT, credentials.chatId);
         SERIAL_LOG_LN("Message sent.");
 
-        SERIAL_LOG_LN("Sending signal.");
-        digitalWrite(WIRELESS_DOORBELL_PIN, HIGH);
-        hasTimeout = true;
-        startedTime = millis();
-    }
-
-    if(hasTimeout && millis() - startedTime > 800) {
-        SERIAL_LOG_LN("Signal turned off.");
-        hasTimeout = false;
-        digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
+        lastActivated = millis();
+        hasSignal = false;
     }
 }
