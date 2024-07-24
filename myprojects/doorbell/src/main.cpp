@@ -17,7 +17,7 @@
 #define CREDS_FILE "credentials.txt"
 #define NOTIF_TEXT "A campainha está tocando."
 
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 
 #ifdef ENABLE_LOGGING
 #define SERIAL_LOG_LN(str) Serial.println(str)
@@ -112,7 +112,7 @@ void setup() {
     }
 
     pinMode(WIRELESS_DOORBELL_PIN, OUTPUT);
-    digitalWrite(WIRELESS_DOORBELL_PIN, HIGH);
+    digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
 
     SERIAL_LOG("Connecting");
 
@@ -156,7 +156,7 @@ void setup() {
 }
 
 void loop() {
-    bot->tick();
+    //bot->tick();
     button.update();
 
     if (bot != nullptr && button.pressed()) {
@@ -173,6 +173,6 @@ void loop() {
     if(hasTimeout && millis() - startedTime > 800) {
         SERIAL_LOG_LN("Signal turned off.");
         hasTimeout = false;
-        digitalWrite(WIRELESS_DOORBELL_PIN, false);
+        digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
     }
 }
