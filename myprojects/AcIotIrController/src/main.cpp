@@ -1,5 +1,5 @@
 #define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "0.0.2"
+#define FIRMWARE_VERSION "0.0.10"
 
 #include <Arduino.h>
 #include "LittleFS.h"
@@ -60,6 +60,7 @@ SinricACWithTemp *ac;
 HTTPClient http;
 WiFiClientSecure client;
 IRSamsungAc acIr(4);
+bool firstUpdate = false;
 
 void saveData() {
     File file = LittleFS.open(DATA_FILE, "w");
@@ -162,6 +163,8 @@ void updateState() {
     acIr.setSwing(false);
     acIr.setPower(data.isOn);
     acIr.send();
+
+    ac->sendTargetTemperatureEvent(targetTemp);
 }
 
 void power(bool &on) {
@@ -240,6 +243,9 @@ void setup() {
     bool enableSerial = false;
 #endif
 
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, HIGH);
+
     LittleFS.begin();
 //    resetConfig(); // Enable to reset
 
@@ -293,7 +299,7 @@ void setup() {
         recoverData();
     }
 
-    SERIAL_LOG_LN("Startup sinric...");
+    SERIAL_LOG_LN("Startup sinric....");
     acIr.begin();
     SinricACWithTemp &localAc = SinricPro[data.deviceId];
     ac = &localAc;
@@ -333,18 +339,33 @@ void setup() {
     SinricPro.onConnected([](){ SERIAL_LOG_LN("Connected to SinricPro"); });
     SinricPro.onDisconnected([](){ SERIAL_LOG_LN("Disconnected from SinricPro"); });
     SinricPro.onOTAUpdate(handleOTAUpdate);
+
     SinricPro.begin(data.appKey, data.appSecret);
-    ac->sendPowerStateEvent(true);
+    ac->sendPowerStateEvent(data.isOn);
+    ac->sendTargetTemperatureEvent(data.targetTemp);
+    ac->sendTemperatureEvent(data.roomTemp);
+    ac->sendRangeValueEvent(data.level);
+    ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
 
     lastTempEvent = -TEMP_UPDATE_INTERVAL;
     SERIAL_LOG_LN("Startup done");
+    delay(5000);
 }
 
 void loop() {
     SinricPro.handle();
     dxlogger::update();
 
+    if (SinricPro.isConnected() && !firstUpdate) {
+        SERIAL_LOG_LN("Doing first state update.");
+        updateState();
+        firstUpdate = true;
+    }
+
     if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
+        digitalWrite(LED_BUILTIN, LOW);
+        unsigned long startMillis = millis();
+
         SERIAL_LOG_LN("Getting weather info...");
         dxweather::getWeatherInfo(data.weatherApiKey, data.lat, data.lon, weatherInfo);
 
@@ -356,17 +377,27 @@ void loop() {
 
             SERIAL_LOG("Ambient temperature is ");
             SERIAL_LOG(String(weatherInfo.temp));
-            SERIAL_LOG(", rounded to: ");
+            SERIAL_LOG(", feelsLike is ");
+            SERIAL_LOG_LN(String(weatherInfo.feelsLike));
+
+            SERIAL_LOG("Rounded temp to: ");
             float rounded = round(weatherInfo.temp);
             SERIAL_LOG_LN(String(rounded));
-            ac->sendTemperatureEvent(rounded);
+            ac->sendTemperatureEvent(rounded, weatherInfo.humidity);
             SERIAL_LOG_LN("Temperature updated.");
 
             if (rounded != data.roomTemp) {
-                updateState();
+                SERIAL_LOG_LN("Temperature is different from current, updating AC unit.");
                 data.roomTemp = rounded;
+                updateState();
             }
         }
+
+        unsigned long endMillis = millis();
+        if (endMillis - startMillis < 2000) {
+            delay(2000-(endMillis-startMillis));
+        }
+        digitalWrite(LED_BUILTIN, HIGH);
 
         lastTempEvent = millis();
     }

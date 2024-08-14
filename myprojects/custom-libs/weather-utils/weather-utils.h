@@ -21,7 +21,7 @@ namespace dxweather {
         float tempMin;
         float tempMax;
         long pressure;
-        long humidity;
+        float humidity;
         long seaLevel;
         long groundLevel;
         String cityName;
