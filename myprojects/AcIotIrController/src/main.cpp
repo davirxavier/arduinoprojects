@@ -1,13 +1,19 @@
+#define SINRICPRO_NOSSL
+#define FIRMWARE_VERSION "0.0.2"
+
 #include <Arduino.h>
 #include "LittleFS.h"
 #include "WiFiManager.h"
 #include "ArduinoJson.h"
 #include "logger.h"
 #include "TZ.h"
-#include "SinricPro.h"
-#include "SinricProWindowAC.h"
 #include "Capabilities/TemperatureSensor.h"
 #include "weather-utils.h"
+#include "ir_Samsung.h"
+#include "SinricPro.h"
+#include "SinricProWindowAC.h"
+#include "ESP8266OTAHelper.h"
+#include "SemVer.h"
 
 #define AP_NAME "ESP-AC-CONTROL-1"
 #define AP_PASSWORD "admin13246"
@@ -32,11 +38,6 @@ public:
     SinricACWithTemp(const String &deviceId) : SinricProWindowAC(deviceId) {}
 };
 
-enum {
-    MODE_COOL = 0,
-    MODE_AUTO = 1,
-};
-
 struct AcData {
     char weatherApiKey[OPENWEATHER_API_KEY_SIZE];
     char lat[LAT_SIZE];
@@ -44,9 +45,9 @@ struct AcData {
     char appKey[APP_KEY_SIZE];
     char appSecret[APP_SECRET_SIZE];
     char deviceId[DEVICE_ID_SIZE];
-    float targetTemp;
-    uint8_t level;
+    uint8_t targetTemp;
     uint8_t roomTemp;
+    uint8_t level;
     bool isAutoMode;
     bool isOn;
 } __attribute__((packed));
@@ -58,6 +59,7 @@ unsigned long lastTempEvent;
 SinricACWithTemp *ac;
 HTTPClient http;
 WiFiClientSecure client;
+IRSamsungAc acIr(4);
 
 void saveData() {
     File file = LittleFS.open(DATA_FILE, "w");
@@ -141,16 +143,43 @@ void IRAM_ATTR resetConfig() {
     resetFunc();
 }
 
-void power(bool &on) {
-    // TODO do
-    data.isOn = on;
-    saveData();
+void updateState() {
+    uint8_t targetTemp = data.targetTemp;
+
+    if (data.isAutoMode) {
+        targetTemp = (data.roomTemp > 30 ? 30 : data.roomTemp);
+        targetTemp = data.roomTemp < 16 ? 16 : (targetTemp - data.level);
+    }
+
+    SERIAL_LOG("Sending state: ");
+    SERIAL_LOG(data.isOn ? "POWER ON, " : "POWER OFF, ");
+    SERIAL_LOG(data.isAutoMode ? "IS AUTO MODE, " : "AUTO MODE DISABLED, ");
+    SERIAL_LOG_LN("TEMP " + String(targetTemp) + String(data.isAutoMode ? "(AUTO)" : ""));
+//    acIr.send(irSender, data.isOn ? POWER_ON : POWER_OFF, MODE_COOL, FAN_3, targetTemp, VDIR_DOWN, HDIR_AUTO);
+    acIr.setTemp(targetTemp);
+    acIr.setMode(kSamsungAcCool);
+    acIr.setFan(kSamsungAcFanMed);
+    acIr.setSwing(false);
+    acIr.setPower(data.isOn);
+    acIr.send();
 }
 
-void setTemp(float &temp) {
-    // todo do
+void power(bool &on) {
+    data.isOn = on;
+    saveData();
+    updateState();
+}
+
+void setTemp(uint8_t temp) {
+    SERIAL_LOG_LN("Setting temp.");
+    if (data.isAutoMode) {
+        SERIAL_LOG_LN("Is auto mode, ignoring target temp event.");
+        return;
+    }
+
     data.targetTemp = temp;
     saveData();
+    updateState();
 }
 
 void setMode(String &mode) {
@@ -161,12 +190,46 @@ void setMode(String &mode) {
     }
 
     saveData();
+    updateState();
 }
 
 void setRange(int &range) {
-    // todo do
     data.level = range;
     saveData();
+    updateState();
+}
+
+bool handleOTAUpdate(const String& url, int major, int minor, int patch, bool forceUpdate) {
+    Version currentVersion  = Version(FIRMWARE_VERSION);
+    Version newVersion      = Version(String(major) + "." + String(minor) + "." + String(patch));
+    bool updateAvailable    = newVersion > currentVersion;
+
+    SERIAL_LOG("URL: ");
+    SERIAL_LOG_LN(url.c_str());
+    SERIAL_LOG("Current version: ");
+    SERIAL_LOG_LN(currentVersion.toString());
+    SERIAL_LOG("New version: ");
+    SERIAL_LOG_LN(newVersion.toString());
+    if (forceUpdate) SERIAL_LOG_LN("Enforcing OTA update!");
+
+    // Handle OTA update based on forceUpdate flag and update availability
+    if (forceUpdate || updateAvailable) {
+        if (updateAvailable) {
+            SERIAL_LOG_LN("Update available!");
+        }
+
+        String result = startOtaUpdate(url);
+        if (!result.isEmpty()) {
+            SinricPro.setResponseMessage(std::move(result));
+            return false;
+        }
+        return true;
+    } else {
+        String result = "Current version is up to date.";
+        SinricPro.setResponseMessage(std::move(result));
+        SERIAL_LOG_LN(result);
+        return false;
+    }
 }
 
 void setup() {
@@ -209,6 +272,12 @@ void setup() {
                     30000,
                     enableSerial);
     dxweather::setup();
+    data.level = 1;
+    data.isAutoMode = false;
+    data.targetTemp = 30;
+    data.roomTemp = 30;
+    data.isOn = false;
+    data.isAutoMode = false;
 
     if (shouldSaveCredentials) {
         SERIAL_LOG_LN("Saving data");
@@ -224,8 +293,8 @@ void setup() {
         recoverData();
     }
 
-    SERIAL_LOG_LN("Startup sinric");
-
+    SERIAL_LOG_LN("Startup sinric...");
+    acIr.begin();
     SinricACWithTemp &localAc = SinricPro[data.deviceId];
     ac = &localAc;
 
@@ -263,6 +332,7 @@ void setup() {
     // setup SinricPro
     SinricPro.onConnected([](){ SERIAL_LOG_LN("Connected to SinricPro"); });
     SinricPro.onDisconnected([](){ SERIAL_LOG_LN("Disconnected from SinricPro"); });
+    SinricPro.onOTAUpdate(handleOTAUpdate);
     SinricPro.begin(data.appKey, data.appSecret);
     ac->sendPowerStateEvent(true);
 
@@ -274,7 +344,7 @@ void loop() {
     SinricPro.handle();
     dxlogger::update();
 
-    if (SinricPro.isConnected() && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
+    if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
         SERIAL_LOG_LN("Getting weather info...");
         dxweather::getWeatherInfo(data.weatherApiKey, data.lat, data.lon, weatherInfo);
 
@@ -291,6 +361,11 @@ void loop() {
             SERIAL_LOG_LN(String(rounded));
             ac->sendTemperatureEvent(rounded);
             SERIAL_LOG_LN("Temperature updated.");
+
+            if (rounded != data.roomTemp) {
+                updateState();
+                data.roomTemp = rounded;
+            }
         }
 
         lastTempEvent = millis();
