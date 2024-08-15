@@ -1,5 +1,5 @@
 #define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "0.0.13"
+#define FIRMWARE_VERSION "0.0.14"
 
 #include <Arduino.h>
 #include "LittleFS.h"
@@ -167,13 +167,10 @@ void updateState() {
     uint8_t fanSpeedMapping;
     switch (data.fanSpeed) {
         case 1:
-            fanSpeedMapping = kSamsungAcFanHigh;
+            fanSpeedMapping = kSamsungAcFanAuto;
             break;
         case 2:
-            fanSpeedMapping = kSamsungAcFanAuto2;
-            break;
-        case 3:
-            fanSpeedMapping = kSamsungAcFanTurbo;
+            fanSpeedMapping = kSamsungAcFanHigh;
             break;
         default:
             fanSpeedMapping = kSamsungAcFanTurbo;
@@ -400,8 +397,6 @@ void setup() {
     ac->sendTemperatureEvent(data.roomTemp);
     ac->sendRangeValueEvent(data.fanSpeed);
     ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
-    ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é " +
-                             String(data.degreesSubtract) + "°C.");
 
     lastTempEvent = -TEMP_UPDATE_INTERVAL;
     SERIAL_LOG_LN("Startup done");
@@ -420,6 +415,9 @@ void loop() {
         SERIAL_LOG_LN("Doing first state update.");
         updateState();
         firstUpdate = true;
+
+        ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é -" +
+                                 String(data.degreesSubtract) + "°C.");
     }
 
     if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
