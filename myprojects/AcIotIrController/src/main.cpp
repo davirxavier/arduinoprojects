@@ -1,5 +1,5 @@
 #define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "0.0.10"
+#define FIRMWARE_VERSION "0.0.13"
 
 #include <Arduino.h>
 #include "LittleFS.h"
@@ -47,7 +47,8 @@ struct AcData {
     char deviceId[DEVICE_ID_SIZE];
     uint8_t targetTemp;
     uint8_t roomTemp;
-    uint8_t level;
+    uint8_t fanSpeed;
+    uint8_t degreesSubtract;
     bool isAutoMode;
     bool isOn;
 } __attribute__((packed));
@@ -61,6 +62,11 @@ HTTPClient http;
 WiFiClientSecure client;
 IRSamsungAc acIr(4);
 bool firstUpdate = false;
+
+bool isCountingFanSets;
+unsigned long fanSpeedCountTimeout;
+uint8_t fanSpeedSetCount;
+uint8_t firstFanSpeedInCount;
 
 void saveData() {
     File file = LittleFS.open(DATA_FILE, "w");
@@ -77,7 +83,8 @@ void saveData() {
     doc["appSecret"] = data.appSecret;
     doc["deviceId"] = data.deviceId;
     doc["targetTemp"] = data.targetTemp;
-    doc["level"] = data.level;
+    doc["level"] = data.fanSpeed;
+    doc["degreesSub"] = data.degreesSubtract;
     doc["roomTemp"] = data.roomTemp;
     doc["mode"] = data.isAutoMode;
     doc["isOn"] = data.isOn;
@@ -121,10 +128,15 @@ void recoverData() {
             sizeof(data.deviceId));
 
     data.targetTemp = doc["targetTemp"];
-    data.level = doc["level"];
+    data.fanSpeed = doc["level"];
     data.roomTemp = doc["roomTemp"];
     data.isAutoMode = doc["mode"];
     data.isOn = doc["isOn"];
+
+    // Needs to do this for every value added after first release
+    if (doc.containsKey("degreesSub")) {
+        data.degreesSubtract = doc["degreesSub"];
+    }
 
     file.close();
 }
@@ -149,17 +161,33 @@ void updateState() {
 
     if (data.isAutoMode) {
         targetTemp = (data.roomTemp > 30 ? 30 : data.roomTemp);
-        targetTemp = data.roomTemp < 16 ? 16 : (targetTemp - data.level);
+        targetTemp = data.roomTemp < 16 ? 16 : (targetTemp - data.degreesSubtract);
+    }
+
+    uint8_t fanSpeedMapping;
+    switch (data.fanSpeed) {
+        case 1:
+            fanSpeedMapping = kSamsungAcFanHigh;
+            break;
+        case 2:
+            fanSpeedMapping = kSamsungAcFanAuto2;
+            break;
+        case 3:
+            fanSpeedMapping = kSamsungAcFanTurbo;
+            break;
+        default:
+            fanSpeedMapping = kSamsungAcFanTurbo;
+            break;
     }
 
     SERIAL_LOG("Sending state: ");
     SERIAL_LOG(data.isOn ? "POWER ON, " : "POWER OFF, ");
     SERIAL_LOG(data.isAutoMode ? "IS AUTO MODE, " : "AUTO MODE DISABLED, ");
     SERIAL_LOG_LN("TEMP " + String(targetTemp) + String(data.isAutoMode ? "(AUTO)" : ""));
-//    acIr.send(irSender, data.isOn ? POWER_ON : POWER_OFF, MODE_COOL, FAN_3, targetTemp, VDIR_DOWN, HDIR_AUTO);
+
     acIr.setTemp(targetTemp);
     acIr.setMode(kSamsungAcCool);
-    acIr.setFan(kSamsungAcFanMed);
+    acIr.setFan(fanSpeedMapping);
     acIr.setSwing(false);
     acIr.setPower(data.isOn);
     acIr.send();
@@ -196,8 +224,25 @@ void setMode(String &mode) {
     updateState();
 }
 
-void setRange(int &range) {
-    data.level = range;
+void setFanSpeed(int &range) {
+    if (isCountingFanSets) {
+        fanSpeedSetCount++;
+
+        if (range != firstFanSpeedInCount || millis() - fanSpeedCountTimeout > 60000) {
+            isCountingFanSets = false;
+        } else if (fanSpeedSetCount >= 4) {
+            isCountingFanSets = false;
+            data.degreesSubtract = range;
+            ac->sendPushNotification("Diferença de temperatura do modo automático ajustada para -" + String(range) + "°C.");
+        }
+    } else {
+        isCountingFanSets = true;
+        fanSpeedCountTimeout = millis();
+        fanSpeedSetCount = 1;
+        firstFanSpeedInCount = range;
+    }
+
+    data.fanSpeed = range;
     saveData();
     updateState();
 }
@@ -278,12 +323,18 @@ void setup() {
                     30000,
                     enableSerial);
     dxweather::setup();
-    data.level = 1;
+    data.fanSpeed = 1;
     data.isAutoMode = false;
     data.targetTemp = 30;
     data.roomTemp = 30;
     data.isOn = false;
     data.isAutoMode = false;
+    data.degreesSubtract = 1;
+
+    isCountingFanSets = false;
+    fanSpeedSetCount = 0;
+    fanSpeedCountTimeout = 0;
+    firstFanSpeedInCount = 1;
 
     if (shouldSaveCredentials) {
         SERIAL_LOG_LN("Saving data");
@@ -305,6 +356,7 @@ void setup() {
     ac = &localAc;
 
     ac->onPowerState([](const String &deviceId, bool &state) {
+        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Turn ");
         SERIAL_LOG_LN(state ? "ON" : "OFF");
         power(state);
@@ -312,6 +364,7 @@ void setup() {
     });
 
     ac->onTargetTemperature([](const String &deviceId, float &temperature) {
+        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Set target temperature to ");
         SERIAL_LOG_LN(String(temperature));
         setTemp(temperature);
@@ -319,6 +372,7 @@ void setup() {
     });
 
     ac->onThermostatMode([](const String &deviceId, String &mode) {
+        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Set mode to ");
         SERIAL_LOG_LN(mode);
         setMode(mode);
@@ -328,7 +382,7 @@ void setup() {
     ac->onRangeValue([](const String &deviceId, int &rangeValue) {
         SERIAL_LOG("SINRIC_EVENT: Set fan speed to ");
         SERIAL_LOG_LN(String(rangeValue));
-        setRange(rangeValue);
+        setFanSpeed(rangeValue);
         return true;
     });
 
@@ -344,8 +398,10 @@ void setup() {
     ac->sendPowerStateEvent(data.isOn);
     ac->sendTargetTemperatureEvent(data.targetTemp);
     ac->sendTemperatureEvent(data.roomTemp);
-    ac->sendRangeValueEvent(data.level);
+    ac->sendRangeValueEvent(data.fanSpeed);
     ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
+    ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é " +
+                             String(data.degreesSubtract) + "°C.");
 
     lastTempEvent = -TEMP_UPDATE_INTERVAL;
     SERIAL_LOG_LN("Startup done");
@@ -355,6 +411,10 @@ void setup() {
 void loop() {
     SinricPro.handle();
     dxlogger::update();
+
+    if (isCountingFanSets && millis() - fanSpeedCountTimeout > 60000) {
+        isCountingFanSets = false;
+    }
 
     if (SinricPro.isConnected() && !firstUpdate) {
         SERIAL_LOG_LN("Doing first state update.");
@@ -387,6 +447,10 @@ void loop() {
             SERIAL_LOG_LN("Temperature updated.");
 
             if (rounded != data.roomTemp) {
+                ac->sendPushNotification("Temperatura ambiente é " + String(rounded) + "°C, alterando "
+                                           "temperatura do ar condicionado "
+                                           "automaticamente para " + String(data.roomTemp - data.degreesSubtract) + "°C.");
+
                 SERIAL_LOG_LN("Temperature is different from current, updating AC unit.");
                 data.roomTemp = rounded;
                 updateState();
