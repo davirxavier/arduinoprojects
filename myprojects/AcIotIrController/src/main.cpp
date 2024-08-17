@@ -1,5 +1,5 @@
 #define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "0.0.14"
+#define FIRMWARE_VERSION "1.1.0"
 
 #include <Arduino.h>
 #include "LittleFS.h"
@@ -51,6 +51,7 @@ struct AcData {
     uint8_t degreesSubtract;
     bool isAutoMode;
     bool isOn;
+    bool swing;
 } __attribute__((packed));
 
 dxweather::WeatherInfo weatherInfo{};
@@ -88,6 +89,7 @@ void saveData() {
     doc["roomTemp"] = data.roomTemp;
     doc["mode"] = data.isAutoMode;
     doc["isOn"] = data.isOn;
+    doc["swing"] = data.swing;
 
     if (serializeJson(doc, file) == 0) {
         SERIAL_LOG_LN(F("Failed to write to file"));
@@ -138,6 +140,10 @@ void recoverData() {
         data.degreesSubtract = doc["degreesSub"];
     }
 
+    if (doc.containsKey("swing")) {
+        data.swing = doc["swing"];
+    }
+
     file.close();
 }
 
@@ -185,7 +191,7 @@ void updateState() {
     acIr.setTemp(targetTemp);
     acIr.setMode(kSamsungAcCool);
     acIr.setFan(fanSpeedMapping);
-    acIr.setSwing(false);
+    acIr.setSwing(data.swing);
     acIr.setPower(data.isOn);
     acIr.send();
 
@@ -213,8 +219,12 @@ void setTemp(uint8_t temp) {
 void setMode(String &mode) {
     if (mode == "AUTO") {
         data.isAutoMode = true;
+        data.swing = false;
     } else if (mode == "COOL") {
         data.isAutoMode = false;
+        data.swing = false;
+    } else if (mode == "HEAT") {
+        data.swing = true;
     }
 
     saveData();
@@ -398,7 +408,7 @@ void setup() {
     ac->sendRangeValueEvent(data.fanSpeed);
     ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
 
-    lastTempEvent = -TEMP_UPDATE_INTERVAL;
+    lastTempEvent = -TEMP_UPDATE_INTERVAL-1;
     SERIAL_LOG_LN("Startup done");
     delay(5000);
 }
@@ -409,15 +419,6 @@ void loop() {
 
     if (isCountingFanSets && millis() - fanSpeedCountTimeout > 60000) {
         isCountingFanSets = false;
-    }
-
-    if (SinricPro.isConnected() && !firstUpdate) {
-        SERIAL_LOG_LN("Doing first state update.");
-        updateState();
-        firstUpdate = true;
-
-        ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é -" +
-                                 String(data.degreesSubtract) + "°C.");
     }
 
     if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
@@ -444,7 +445,7 @@ void loop() {
             ac->sendTemperatureEvent(rounded, weatherInfo.humidity);
             SERIAL_LOG_LN("Temperature updated.");
 
-            if (rounded != data.roomTemp) {
+            if (rounded != data.roomTemp || !firstUpdate) {
                 ac->sendPushNotification("Temperatura ambiente é " + String(rounded) + "°C, alterando "
                                            "temperatura do ar condicionado "
                                            "automaticamente para " + String(data.roomTemp - data.degreesSubtract) + "°C.");
@@ -452,6 +453,12 @@ void loop() {
                 SERIAL_LOG_LN("Temperature is different from current, updating AC unit.");
                 data.roomTemp = rounded;
                 updateState();
+            }
+
+            if (!firstUpdate) {
+                ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é -" +
+                                         String(data.degreesSubtract) + "°C.");
+                firstUpdate = true;
             }
         }
 
