@@ -138,11 +138,14 @@ void loop() {
         Serial.println(path);
 #endif
 
+        int response = fetch.GET(config.managementUrl + "/" + config.userUid + "/has_pchange");
+        String responseStr = fetch.readString();
+
         fetch.begin(path);
         fetch.addHeader("content-type", "text/plain"); // TODO real coords
         String body = String() + R"({"lat": ")" + "12.032146" + R"(", "lon": ")" + String(random(-150, 150)) + "." + String(random(100000, 999999)) + "\"}";
         String bodyEncrypted = "\"" + cryptoHelperEncrypt(body, config.encryptionKey.c_str()) + "\"";
-        int response = fetch.PUT(bodyEncrypted);
+        response = fetch.PUT(bodyEncrypted);
 
 #ifdef ENABLE_LOGGING
         Serial.printf("Encryption key: %s\n", config.encryptionKey.c_str());

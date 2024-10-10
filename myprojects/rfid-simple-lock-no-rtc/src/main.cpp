@@ -21,12 +21,12 @@ RCSwitch rc = RCSwitch();
 String kayCardIds[] = KEYCARD_IDS;
 
 #define DELAY_TRIES_MS 15000
-#define TIMEOUT_MS 40000
-#define EEPROM_CHECK_VAL 0xB4
+#define TIMEOUT_MS 33000
+#define EEPROM_CHECK_VAL 0xB4 // RANDOM VALUE FOR EEPROM MARKING
 #define EEPROM_LOCKED_BIT 2
 
-#define SS_PIN 10 //PINO SDA
-#define RST_PIN 9 //PINO DE RESET
+#define SS_PIN 10
+#define RST_PIN 9
 #define LED_PIN 5
 #define RELAY_PIN A0
 

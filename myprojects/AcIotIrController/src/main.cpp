@@ -1,5 +1,5 @@
 #define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "1.1.0"
+#define FIRMWARE_VERSION "1.1.2"
 
 #include <Arduino.h>
 #include "LittleFS.h"
@@ -52,6 +52,7 @@ struct AcData {
     bool isAutoMode;
     bool isOn;
     bool swing;
+    bool isEco;
 } __attribute__((packed));
 
 dxweather::WeatherInfo weatherInfo{};
@@ -63,11 +64,6 @@ HTTPClient http;
 WiFiClientSecure client;
 IRSamsungAc acIr(4);
 bool firstUpdate = false;
-
-bool isCountingFanSets;
-unsigned long fanSpeedCountTimeout;
-uint8_t fanSpeedSetCount;
-uint8_t firstFanSpeedInCount;
 
 void saveData() {
     File file = LittleFS.open(DATA_FILE, "w");
@@ -90,6 +86,7 @@ void saveData() {
     doc["mode"] = data.isAutoMode;
     doc["isOn"] = data.isOn;
     doc["swing"] = data.swing;
+    doc["isEco"] = data.isEco;
 
     if (serializeJson(doc, file) == 0) {
         SERIAL_LOG_LN(F("Failed to write to file"));
@@ -142,6 +139,10 @@ void recoverData() {
 
     if (doc.containsKey("swing")) {
         data.swing = doc["swing"];
+    }
+
+    if (doc.containsKey("isEco")) {
+        data.isEco = doc["isEco"];
     }
 
     file.close();
@@ -220,11 +221,17 @@ void setMode(String &mode) {
     if (mode == "AUTO") {
         data.isAutoMode = true;
         data.swing = false;
+        data.isEco = false;
     } else if (mode == "COOL") {
         data.isAutoMode = false;
         data.swing = false;
+        data.isEco = false;
     } else if (mode == "HEAT") {
         data.swing = true;
+        data.isEco = false;
+    } else if (mode == "ECO") {
+        data.isEco = true;
+        data.swing = false;
     }
 
     saveData();
@@ -232,24 +239,13 @@ void setMode(String &mode) {
 }
 
 void setFanSpeed(int &range) {
-    if (isCountingFanSets) {
-        fanSpeedSetCount++;
-
-        if (range != firstFanSpeedInCount || millis() - fanSpeedCountTimeout > 60000) {
-            isCountingFanSets = false;
-        } else if (fanSpeedSetCount >= 4) {
-            isCountingFanSets = false;
-            data.degreesSubtract = range;
-            ac->sendPushNotification("Diferença de temperatura do modo automático ajustada para -" + String(range) + "°C.");
-        }
+    if (data.isEco) {
+        data.degreesSubtract = range-1;
+        ac->sendPushNotification("Diferença de temperatura ajustada para -" + String(range-1) + "ºC.");
     } else {
-        isCountingFanSets = true;
-        fanSpeedCountTimeout = millis();
-        fanSpeedSetCount = 1;
-        firstFanSpeedInCount = range;
+        data.fanSpeed = range;
     }
 
-    data.fanSpeed = range;
     saveData();
     updateState();
 }
@@ -337,11 +333,7 @@ void setup() {
     data.isOn = false;
     data.isAutoMode = false;
     data.degreesSubtract = 1;
-
-    isCountingFanSets = false;
-    fanSpeedSetCount = 0;
-    fanSpeedCountTimeout = 0;
-    firstFanSpeedInCount = 1;
+    data.isEco = false;
 
     if (shouldSaveCredentials) {
         SERIAL_LOG_LN("Saving data");
@@ -363,7 +355,6 @@ void setup() {
     ac = &localAc;
 
     ac->onPowerState([](const String &deviceId, bool &state) {
-        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Turn ");
         SERIAL_LOG_LN(state ? "ON" : "OFF");
         power(state);
@@ -371,7 +362,6 @@ void setup() {
     });
 
     ac->onTargetTemperature([](const String &deviceId, float &temperature) {
-        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Set target temperature to ");
         SERIAL_LOG_LN(String(temperature));
         setTemp(temperature);
@@ -379,7 +369,6 @@ void setup() {
     });
 
     ac->onThermostatMode([](const String &deviceId, String &mode) {
-        isCountingFanSets = false;
         SERIAL_LOG("SINRIC_EVENT: Set mode to ");
         SERIAL_LOG_LN(mode);
         setMode(mode);
@@ -416,10 +405,6 @@ void setup() {
 void loop() {
     SinricPro.handle();
     dxlogger::update();
-
-    if (isCountingFanSets && millis() - fanSpeedCountTimeout > 60000) {
-        isCountingFanSets = false;
-    }
 
     if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
         digitalWrite(LED_BUILTIN, LOW);

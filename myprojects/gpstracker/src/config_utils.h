@@ -11,8 +11,10 @@
 
 struct VehicleConfig {
     String databaseUrl;
+    String managementUrl;
     String encryptionKey;
     String userKey;
+    String userUid;
     String vehicleUid;
     boolean parseSuccess;
     boolean decryptionSuccess;
@@ -70,7 +72,9 @@ VehicleConfig getConfig() {
     } else {
         config.parseSuccess = true;
         config.databaseUrl = String(doc["databaseUrl"]);
+        config.managementUrl = String(doc["managementUrl"]);
         config.userKey = String(doc["userKey"]);
+        config.userUid = String(doc["userUid"]);
         config.vehicleUid = String(doc["vehicleUid"]);
 
         String keyStr = String(doc["encryptionKey"]);
