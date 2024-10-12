@@ -13,9 +13,6 @@
 
 #define AP_NAME "ESP-DOORBELL-0842"
 #define AP_PASSWORD "admin13246"
-#define APIKEY_SIZE 47
-#define CHAT_ID_SIZE 20
-#define CREDS_FILE "credentials.txt"
 #define NOTIF_TEXT "A campainha está tocando."
 
 #define ENABLE_SERIAL_LOGGING
@@ -24,67 +21,26 @@
 #define SERIAL_LOG_LN(str) dxlogger::log(str, true)
 #define SERIAL_LOG(str) dxlogger::log(str, false)
 
-bool shouldSaveCredentials;
-
-struct Credentials {
-    char apiKey[APIKEY_SIZE];
-    char chatId[CHAT_ID_SIZE];
-} __attribute__((packed));
-
 String turnOnCommand = "@notificatronbot ligar";
 String turnOffCommand = "@notificatronbot desligar";
 String logsCommand = "@notificatronbot logs";
 String resetCommand = "@notificatronbot resetar";
+String cleanLogsCommand = "@notificatronbot limpar";
+String ringCommand = "@notificatronbot tocar";
 
-Credentials credentials{};
+String chatId = String(TELEGRAM_CHAT_ID);
+String apiKey = String(TELEGRAM_API_KEY);
+
 WiFiManager manager;
 FastBot bot;
 ESP8266WebServer server(80);
+WiFiClient wifiClient;
+HTTPClient http;
 
-volatile unsigned long lastSignal;
-volatile bool hasSignal;
-unsigned long lastActivated;
+bool hasSignal;
+unsigned long lastSentMessage;
+unsigned long lastRang;
 boolean isOn;
-
-void saveCredentials() {
-    File file = LittleFS.open(CREDS_FILE, "w");
-    if (!file) {
-        SERIAL_LOG_LN(F("Failed to create file"));
-        return;
-    }
-
-    JsonDocument doc;
-    doc["apiKey"] = credentials.apiKey;
-    doc["chatId"] = credentials.chatId;
-
-    if (serializeJson(doc, file) == 0) {
-        SERIAL_LOG_LN(F("Failed to write to file"));
-    }
-
-    file.close();
-}
-
-void recoverCredentials() {
-    if (!LittleFS.exists(CREDS_FILE)) {
-        SERIAL_LOG_LN("Credentials file does not exist.");
-        return;
-    }
-
-    File file = LittleFS.open(CREDS_FILE, "r");
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, file);
-    if (error)
-        SERIAL_LOG_LN(F("Failed to read file, using default configuration"));
-
-    strlcpy(credentials.apiKey,
-            doc["apiKey"] | "",
-            sizeof(credentials.apiKey));
-    strlcpy(credentials.chatId,
-            doc["chatId"] | "",
-            sizeof(credentials.chatId));
-
-    file.close();
-}
 
 void(* resetFunc) (void) = 0;
 
@@ -92,13 +48,18 @@ void IRAM_ATTR resetConfig() {
     SERIAL_LOG_LN("Resetting the wifi configuration.");
     manager.resetSettings();
     ESP.eraseConfig();
-
-    if (LittleFS.exists(CREDS_FILE)) {
-        LittleFS.remove(CREDS_FILE);
-    }
-
     delay(200);
     resetFunc();
+}
+
+void callHttpRing() {
+    SERIAL_LOG_LN("Sending doorbell wireless signal.");
+
+    http.begin(wifiClient, BELL_HOSTNAME);
+    int response = http.POST(String(BELL_USER) + ";" + String(BELL_PASS));
+    http.end();
+
+    SERIAL_LOG_LN("Signal response: " + String(response));
 }
 
 void IRAM_ATTR button_interrupt()
@@ -109,19 +70,7 @@ void IRAM_ATTR button_interrupt()
         return;
     }
 
-    if (millis() - lastSignal > 1000) {
-        SERIAL_LOG_LN("Sending doorbell wireless signal.");
-
-        digitalWrite(WIRELESS_DOORBELL_PIN, HIGH);
-        delay(50);
-        digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
-
-        hasSignal = true;
-    } else {
-//        SERIAL_LOG_LN("Delay too short, ignoring.");
-    }
-
-    lastSignal = millis();
+    hasSignal = true;
 }
 
 void onMaxLogsFile(File file) {
@@ -134,7 +83,7 @@ void handleMessage(FB_msg& msg) {
     SERIAL_LOG(msg.chatID);
     SERIAL_LOG_LN(" - " + msg.text);
 
-    if (msg.chatID != credentials.chatId) {
+    if (msg.chatID != chatId) {
         return;
     }
 
@@ -150,12 +99,22 @@ void handleMessage(FB_msg& msg) {
         bot.replyMessage(F("Campainha desligada."), msg.messageID, msg.chatID);
     } else if (msg.text.equals(logsCommand)) {
         File file = LittleFS.open(LOGS_FILE, "r");
-        bot.sendFile(file, FB_DOC, "logs.txt", credentials.chatId);
+        bot.sendFile(file, FB_DOC, "logs.txt", chatId);
         file.close();
     } else if (msg.text.equals(resetCommand)) {
         bot.replyMessage(F("Resetando configurações do sistema, será necessário reconfigurá-lo."), msg.messageID, msg.chatID);
         resetConfig();
+    } else if (msg.text.equals(cleanLogsCommand)) {
+        if (!LittleFS.exists(LOGS_FILE)) {
+            return;
+        }
+
+        LittleFS.remove(LOGS_FILE);
+        bot.replyMessage(F("Arquivo de logs limpo."), msg.messageID, msg.chatID);
     }
+//    else if (msg.text.equals(ringCommand)) {
+//        callHttpRing();
+//    }
 }
 
 void setup() {
@@ -170,28 +129,20 @@ void setup() {
     digitalWrite(WIRELESS_DOORBELL_PIN, LOW);
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), button_interrupt, FALLING);
 
-    lastSignal = 0;
-    lastActivated = 0;
+    lastSentMessage = 0;
+    lastRang = 0;
     hasSignal = false;
     isOn = true;
     turnOnCommand.toUpperCase();
     turnOffCommand.toUpperCase();
     logsCommand.toUpperCase();
     resetCommand.toUpperCase();
+    cleanLogsCommand.toUpperCase();
+    ringCommand.toUpperCase();
     LittleFS.begin();
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
-
-    WiFiManagerParameter apiKey("apiKey", "Telegram api key", NULL, APIKEY_SIZE);
-    WiFiManagerParameter chatId("chatId", "Telegram chat id", NULL, 100);
-
-    manager.addParameter(&apiKey);
-    manager.addParameter(&chatId);
-    manager.setSaveConfigCallback([]() {
-        shouldSaveCredentials = true;
-    });
     manager.autoConnect(AP_NAME, AP_PASSWORD);
 
 #ifdef ENABLE_SERIAL_LOGGING
@@ -205,30 +156,14 @@ void setup() {
                     MAX_LOG_SIZE_BYTES,
                     onMaxLogsFile);
 
-    if (shouldSaveCredentials) {
-        SERIAL_LOG_LN("Saving credentials");
-        strncpy(credentials.apiKey, apiKey.getValue(), APIKEY_SIZE);
-        strncpy(credentials.chatId, chatId.getValue(), CHAT_ID_SIZE);
-
-        saveCredentials();
-    } else {
-        SERIAL_LOG_LN("Recovering Credentials.");
-        recoverCredentials();
-    }
-
-//    SERIAL_LOG("API KEY: ");
-//    SERIAL_LOG_LN(credentials.apiKey);
-//    SERIAL_LOG("CHATID: ");
-//    SERIAL_LOG_LN(credentials.chatId);
-
     ElegantOTA.begin(&server);
-    ElegantOTA.setAuth(UPDATE_USER, UPDATE_PASS);
+    ElegantOTA.setAuth(BELL_USER, BELL_PASS);
     server.begin();
 
     bot.skipUpdates();
-    bot.setToken(credentials.apiKey);
+    bot.setToken(apiKey);
     bot.attach(handleMessage);
-    bot.sendMessage("Campainha online.", credentials.chatId);
+    bot.sendMessage("Campainha online.", chatId);
 
     SERIAL_LOG_LN("Startup");
 }
@@ -236,14 +171,26 @@ void setup() {
 void loop() {
     dxlogger::update();
     bot.tick();
+    server.handleClient();
+    ElegantOTA.loop();
 
-    if (isOn && hasSignal && millis() - lastActivated > 5000) {
-        SERIAL_LOG_LN("Sending message.");
-        uint8_t res = bot.sendMessage(NOTIF_TEXT, credentials.chatId);
-        SERIAL_LOG("Message sent: ");
-        SERIAL_LOG_LN(String(res));
+    if (isOn && digitalRead(BUTTON_PIN) == LOW) {
+        hasSignal = true;
+    }
 
-        lastActivated = millis();
+    if (isOn && hasSignal && millis() - lastRang > 250) {
+        if (millis() - lastSentMessage > 3000) {
+            SERIAL_LOG_LN("Sending message.");
+            uint8_t res = bot.sendMessage(NOTIF_TEXT, chatId);
+            SERIAL_LOG("Message sent: ");
+            SERIAL_LOG_LN(String(res));
+
+            lastSentMessage = millis();
+        }
+
+        callHttpRing();
+
+        lastRang = millis();
         hasSignal = false;
     }
 }

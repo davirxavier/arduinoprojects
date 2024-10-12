@@ -1,2 +1,2 @@
-#define UPDATE_USER ""
-#define UPDATE_PASS ""
+#define BELL_USER ""
+#define BELL_PASS ""

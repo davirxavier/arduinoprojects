@@ -35,14 +35,20 @@ void setup(void) {
     manager.autoConnect(AP_NAME, AP_PASSWORD);
 
     server.on("/ring", HTTP_POST, []() {
-        isRinging = true;
-        ringingStart = millis();
-        digitalWrite(RING_PIN, HIGH);
-        server.send(200, "text/plain", "OK");
+        String body = server.arg("plain");
+
+        if (body.equals(String(BELL_USER) + ";" + String(BELL_PASS))) {
+            isRinging = true;
+            ringingStart = millis();
+            digitalWrite(RING_PIN, HIGH);
+            server.send(200, "text/plain", "OK");
+        } else {
+            server.send(401, "text/plain", "INCORRECT AUTH");
+        }
     });
 
     ElegantOTA.begin(&server);
-    ElegantOTA.setAuth(UPDATE_USER, UPDATE_PASS);
+    ElegantOTA.setAuth(BELL_USER, BELL_PASS);
     server.begin();
 }
 
@@ -55,7 +61,7 @@ void loop(void) {
         digitalWrite(RING_PIN, LOW);
     }
 
-    if (digitalRead(RESET_PIN) == LOW) {
-        resetConfig();
-    }
+//    if (digitalRead(RESET_PIN) == LOW) {
+//        resetConfig();
+//    }
 }
