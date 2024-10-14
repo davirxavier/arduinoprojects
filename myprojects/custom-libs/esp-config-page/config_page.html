@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ESP Node Config</title>
+    <title>{{name}} - Config</title>
 
     <style>
         button {
@@ -24,7 +24,6 @@
         .title-text {
             color: #BDBDBD;
             font-size: 0.8em;
-            margin-top: 2rem;
             margin-left: auto;
             margin-right: auto;
             width: fit-content;
@@ -42,7 +41,7 @@
 </head>
 <body style="background-color: #212121; color: #CFD8DC; font-family: sans-serif; overflow: auto">
 
-<p class="title-text">SETTINGS</p>
+<p class="title-text" style="margin-top: 2rem;">SETTINGS</p>
 
 <div style="width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
     {{custom-actions}}
@@ -58,6 +57,12 @@
     <button onclick="save()" style="margin-top: 2rem; width: fit-content; margin-left: auto; margin-right: auto">Save</button>
 
     <label style="margin: 0 auto 0 auto" id="status"></label>
+</div>
+
+<div style="width: 500px; margin: 2rem auto 0 auto;">
+    <hr>
+    <p class="title-text" style="margin-top: 2rem;">DEVICE ID: <span style="font-weight: bold">{{name}}</span></p>
+    <p class="title-text">MAC ADDRESS: <span style="font-weight: bold">{{mac}}</span></p>
 </div>
 
 </body>

@@ -50,11 +50,12 @@ void setup(void) {
     ElegantOTA.begin(&server);
     ElegantOTA.setAuth(BELL_USER, BELL_PASS);
 
-    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS);
+    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS, "ESP-BELL-2");
 
     ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", []() {
         Serial.println("run action");
     });
+    ESP_CONFIG_PAGE::addEnvVar("TELEGRAM_TOKEN", "");
 
     server.begin();
 }

@@ -35,6 +35,7 @@ namespace ESP_CONFIG_PAGE {
     uint8_t customActionsCount;
     uint8_t maxCustomActions;
 
+    String name = "ESP";
     void (*saveEnvVarsCallback)(EnvVar **envVars, uint8_t envVarCount);
 
     String getValueSplit(String data, char separator, int index)
@@ -58,12 +59,13 @@ namespace ESP_CONFIG_PAGE {
 
     bool handleLogin(ESP8266WebServer &server, String username, String password);
 
-    void setup(ESP8266WebServer &server, String username, String password) {
+    void setup(ESP8266WebServer &server, String username, String password, String nodeName) {
         customActionsCount = 0;
         maxCustomActions = 0;
         envVarCount = 0;
         maxEnvVars = 0;
         saveEnvVarsCallback = NULL;
+        name = nodeName;
 
         server.on(F("/config"), HTTP_GET, [&server, username, password]() {
             handleRequest(server, username, password, CONFIG_PAGE);
@@ -118,6 +120,8 @@ namespace ESP_CONFIG_PAGE {
 
         html.replace(F("{{custom-actions}}"), customActionsStr);
         html.replace(F("{{env}}"), envVarsStr);
+        html.replace(F("{{name}}"), name);
+        html.replace(F("{{mac}}"), WiFi.macAddress());
 
         return html;
     }
