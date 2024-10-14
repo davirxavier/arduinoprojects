@@ -2,6 +2,7 @@
 #include "WiFiManager.h"
 #include "ElegantOTA.h"
 #include "secrets.h"
+#include "esp-config-page.h"
 
 #define AP_NAME "ESP-BELL-1"
 #define AP_PASSWORD "admin13246"

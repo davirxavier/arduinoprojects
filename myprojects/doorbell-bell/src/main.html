@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{name}} Config</title>
+
+    <style>
+        button {
+            background-color: rgba(66, 66, 66, 0.5);
+            color: #CFD8DC;
+            font-size: 1em;
+            border: none;
+            border-radius: 8px;
+            padding: 1rem 1.5rem 1rem 1.5rem;
+            filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)) drop-shadow(0 2px 2px rgb(0 0 0 / 0.06));
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: rgba(66, 66, 66, 0.95);
+            transition: all 0.15s linear;
+        }
+
+        .title-text {
+            color: #BDBDBD;
+            font-size: 0.8em;
+            margin-top: 2rem;
+            margin-left: auto;
+            margin-right: auto;
+            width: fit-content;
+        }
+
+        input {
+            background-color: rgba(255, 255, 255, 0);
+            outline: none;
+            padding: 0.5rem;
+            border: 1px rgb(128, 128, 128) solid;
+            border-radius: 4px;
+            color: #CFD8DC;
+        }
+    </style>
+</head>
+<body style="background-color: #212121; color: #CFD8DC; font-family: sans-serif; overflow: auto">
+
+<p class="title-text">SETTINGS</p>
+
+<div style="width: 50%; min-width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
+    <button onclick="resetWireless()">Reset wireless settings</button>
+
+<!--    <button onclick="customAction('EVENT_ID')">RING</button>-->
+
+    {{custom-actions}}
+</div>
+
+<div style="width: 70%; min-width: 500px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
+    <hr style="width: 100%;">
+
+    <p class="title-text" style="margin-top: 0">ENVIRONMENT VARIABLES</p>
+
+<!--    <div style="display: flex; align-items: center; justify-content: space-between;">-->
+<!--        <label style="margin-right: 1rem">TOKEN</label>-->
+<!--        <input id="input-TOKEN_TEST" class="env-input" style="flex: 1">-->
+<!--    </div>-->
+
+<!--    <div style="display: flex; align-items: center; justify-content: space-between;">-->
+<!--        <label style="margin-right: 1rem">NAME</label>-->
+<!--        <input id="input-NAME" class="env-input" style="flex: 1">-->
+<!--    </div>-->
+
+    {{env}}
+
+    <button onclick="save()" style="margin-top: 2rem; width: fit-content; margin-left: auto; margin-right: auto">Save</button>
+
+    <label style="margin: 0 auto 0 auto" id="status"></label>
+</div>
+
+</body>
+<script>
+
+    function setStatus(error, message) {
+        const status = document.getElementById('status');
+        status.style.color = error ? 'red' : 'green';
+        status.innerText = message + '';
+    }
+
+    function save() {
+        const arr = document.querySelectorAll('.env-input');
+
+        const obj = {};
+        arr.forEach(node => {
+            obj[node.id.split('input-', 2)[1]] = node.value;
+        });
+
+        if (window.confirm('Save environment variables?')) {
+            let str = '';
+            Object.keys(obj).forEach(key => str += `${key}:${obj[key]};`);
+            doPost('save', str);
+        }
+    }
+
+    function resetWireless() {
+        if (confirm('Reset all wireless settings?')) {
+            doPost('reset', '');
+        }
+    }
+
+    function customAction(eventId) {
+        if (confirm('Do action: ' + eventId + ' ?')) {
+            doPost('customa', eventId);
+        }
+    }
+
+    function doPost(uri, data) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", (window.location.href.endsWith('/') ? window.location.href : window.location.href + '/') + uri, true);
+        xhr.setRequestHeader('Content-Type', 'text/plain');
+        xhr.send(data);
+
+        xhr.onreadystatechange = function () {
+            if (this.readyState !== 4) return;
+
+            const success = this.status === 200;
+            setStatus(!success, success ? 'Success!' : this.responseText);
+        };
+    }
+</script>
+</html>
