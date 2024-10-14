@@ -2,7 +2,6 @@
 #include "LittleFS.h"
 #include "WiFiManager.h"
 #include "FastBot.h"
-#include "ArduinoJson.h"
 #include "logger.h"
 #include <TZ.h>
 #include "ElegantOTA.h"

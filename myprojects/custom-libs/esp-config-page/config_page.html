@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{name}} Config</title>
+    <title>ESP Node Config</title>
 
     <style>
         button {
@@ -44,28 +44,14 @@
 
 <p class="title-text">SETTINGS</p>
 
-<div style="width: 50%; min-width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
-    <button onclick="resetWireless()">Reset wireless settings</button>
-
-<!--    <button onclick="customAction('EVENT_ID')">RING</button>-->
-
+<div style="width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
     {{custom-actions}}
 </div>
 
-<div style="width: 70%; min-width: 500px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
+<div id="env-div" style="width: 500px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
     <hr style="width: 100%;">
 
     <p class="title-text" style="margin-top: 0">ENVIRONMENT VARIABLES</p>
-
-<!--    <div style="display: flex; align-items: center; justify-content: space-between;">-->
-<!--        <label style="margin-right: 1rem">TOKEN</label>-->
-<!--        <input id="input-TOKEN_TEST" class="env-input" style="flex: 1">-->
-<!--    </div>-->
-
-<!--    <div style="display: flex; align-items: center; justify-content: space-between;">-->
-<!--        <label style="margin-right: 1rem">NAME</label>-->
-<!--        <input id="input-NAME" class="env-input" style="flex: 1">-->
-<!--    </div>-->
 
     {{env}}
 
@@ -122,6 +108,11 @@
             const success = this.status === 200;
             setStatus(!success, success ? 'Success!' : this.responseText);
         };
+    }
+
+    const arr = document.querySelectorAll('.env-input');
+    if (arr.length === 0) {
+        document.getElementById('env-div').style.display = 'none';
     }
 </script>
 </html>

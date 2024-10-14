@@ -4,12 +4,11 @@
 #include "secrets.h"
 #include "esp-config-page.h"
 
-#define AP_NAME "ESP-BELL-1"
+#define AP_NAME "ESP-BELL-2"
 #define AP_PASSWORD "admin13246"
 
 #define RING_PIN 2
 #define RING_MILLIS 1500
-#define RESET_PIN 1
 
 WiFiManager manager;
 ESP8266WebServer server(80);
@@ -27,10 +26,10 @@ void IRAM_ATTR resetConfig() {
 }
 
 void setup(void) {
+    Serial.begin(115200);
+
     pinMode(RING_PIN, OUTPUT);
     digitalWrite(RING_PIN, LOW);
-
-    pinMode(RESET_PIN, INPUT_PULLUP);
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
     manager.autoConnect(AP_NAME, AP_PASSWORD);
@@ -50,6 +49,13 @@ void setup(void) {
 
     ElegantOTA.begin(&server);
     ElegantOTA.setAuth(BELL_USER, BELL_PASS);
+
+    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS);
+
+    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", []() {
+        Serial.println("run action");
+    });
+
     server.begin();
 }
 
@@ -61,8 +67,4 @@ void loop(void) {
         isRinging = false;
         digitalWrite(RING_PIN, LOW);
     }
-
-//    if (digitalRead(RESET_PIN) == LOW) {
-//        resetConfig();
-//    }
 }
