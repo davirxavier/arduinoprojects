@@ -4,7 +4,7 @@
 #include "secrets.h"
 #include "esp-config-page.h"
 
-#define AP_NAME "ESP-BELL-2"
+#define AP_NAME "ESP-DOORBELL-BELL"
 #define AP_PASSWORD "admin13246"
 
 #define RING_PIN 2
@@ -50,12 +50,11 @@ void setup(void) {
     ElegantOTA.begin(&server);
     ElegantOTA.setAuth(BELL_USER, BELL_PASS);
 
-    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS, "ESP-BELL-2");
-
-    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", []() {
-        Serial.println("run action");
+    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS, "ESP-DOORBELL-BELL");
+    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", [](ESP8266WebServer &server) {
+        server.send(200);
+        resetConfig();
     });
-    ESP_CONFIG_PAGE::addEnvVar("TELEGRAM_TOKEN", "");
 
     server.begin();
 }

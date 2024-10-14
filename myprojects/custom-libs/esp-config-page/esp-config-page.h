@@ -8,13 +8,16 @@
 #include <Arduino.h>
 #include "ESP8266WebServer.h"
 #include "config-html.h"
+#include "LittleFS.h"
 
 namespace ESP_CONFIG_PAGE {
 
     enum REQUEST_TYPE {
         CONFIG_PAGE,
         SAVE,
-        CUSTOM_ACTIONS
+        CUSTOM_ACTIONS,
+        FILES,
+        UPLOAD_FILE
     };
 
     struct EnvVar {
@@ -24,7 +27,7 @@ namespace ESP_CONFIG_PAGE {
 
     struct CustomAction {
         const String key;
-        std::function<void(void)> handler;
+        std::function<void(ESP8266WebServer &server)> handler;
     };
 
     EnvVar **envVars;
@@ -60,6 +63,8 @@ namespace ESP_CONFIG_PAGE {
     bool handleLogin(ESP8266WebServer &server, String username, String password);
 
     void setup(ESP8266WebServer &server, String username, String password, String nodeName) {
+        LittleFS.begin();
+
         customActionsCount = 0;
         maxCustomActions = 0;
         envVarCount = 0;
@@ -78,6 +83,14 @@ namespace ESP_CONFIG_PAGE {
         server.on(F("/config/customa"), HTTP_POST, [&server, username, password]() {
             handleRequest(server, username, password, CUSTOM_ACTIONS);
         });
+
+        server.on(F("/config/files"), HTTP_GET, [&server, username, password]() {
+            handleRequest(server, username, password, FILES);
+        });
+
+        server.on(F("/config/files"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, UPLOAD_FILE);
+        });
     }
 
     void addEnvVar(String key, String initialValue) {
@@ -90,7 +103,7 @@ namespace ESP_CONFIG_PAGE {
         envVarCount++;
     }
 
-    void addCustomAction(String key, std::function<void(void)> handler) {
+    void addCustomAction(String key, std::function<void(ESP8266WebServer &server)> handler) {
         if (customActionsCount + 1 > maxCustomActions) {
             maxCustomActions = maxCustomActions == 0 ? 1 : ceil(maxCustomActions * 1.5);
             customActions = (CustomAction**) realloc(customActions, sizeof(CustomAction*) * maxCustomActions);
@@ -137,6 +150,21 @@ namespace ESP_CONFIG_PAGE {
             case CONFIG_PAGE:
                 server.send(200, F("text/html"), buildPage());
                 break;
+            case FILES: {
+                String ret;
+
+                Dir dir = LittleFS.openDir("/");
+                while (dir.next()) {
+                    ret += dir.fileName() + ":" + (dir.isDirectory() ? "true" : "false") + ":" + dir.fileSize() + ";";
+                }
+
+                server.send(200, "text/plain", ret);
+                break;
+            }
+            case UPLOAD_FILE: {
+                server.upload();
+                break;
+            }
             case CUSTOM_ACTIONS: {
                 if (customActionsCount == 0) {
                     return;
@@ -152,7 +180,9 @@ namespace ESP_CONFIG_PAGE {
                 }
 
                 if (ca != NULL) {
-                    ca->handler();
+                    ca->handler(server);
+                } else {
+                    server.send(200);
                 }
                 break;
             }
@@ -187,6 +217,7 @@ namespace ESP_CONFIG_PAGE {
                 if (saveEnvVarsCallback != NULL) {
                     saveEnvVarsCallback(envVars, envVarCount);
                 }
+                server.send(200);
                 break;
         }
     }
