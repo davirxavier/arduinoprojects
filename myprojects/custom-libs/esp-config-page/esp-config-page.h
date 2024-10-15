@@ -18,7 +18,9 @@ namespace ESP_CONFIG_PAGE {
         CUSTOM_ACTIONS,
         FILES,
         DOWNLOAD_FILE,
-        DELETE_FILE
+        DELETE_FILE,
+        OTA_END,
+        OTA_WRITE
     };
 
     struct EnvVar {
@@ -96,6 +98,14 @@ namespace ESP_CONFIG_PAGE {
         server.on(F("/config/files/delete"), HTTP_POST, [&server, username, password]() {
             handleRequest(server, username, password, DELETE_FILE);
         });
+
+        server.on(F("/config/update"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, OTA_END);
+        }, [&server, username, password]() {
+            handleRequest(server, username, password, OTA_WRITE);
+        });
+
+
     }
 
     void addEnvVar(String key, String initialValue) {
@@ -229,7 +239,7 @@ namespace ESP_CONFIG_PAGE {
                 }
                 break;
             }
-            case SAVE:
+            case SAVE: {
                 if (envVarCount == 0) {
                     return;
                 }
@@ -262,6 +272,41 @@ namespace ESP_CONFIG_PAGE {
                 }
                 server.send(200);
                 break;
+            }
+            case OTA_END: {
+                server.sendHeader("Connection", "close");
+                server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+                delay(100);
+                ESP.restart();
+                break;
+            }
+            case OTA_WRITE: {
+                HTTPUpload& upload = server.upload();
+
+                if (upload.status == UPLOAD_FILE_START) {
+                    WiFiUDP::stopAll();
+                    uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+
+                    Update.runAsync(true);
+                    if (!Update.begin(maxSketchSpace)) {  // start with max available size
+                        Update.printError(Serial);
+                        server.send(400, "text/plain", Update.getErrorString());
+                    }
+
+                } else if (upload.status == UPLOAD_FILE_WRITE) {
+                    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                        server.send(400, "text/plain", Update.getErrorString());
+                    }
+                } else if (upload.status == UPLOAD_FILE_END) {
+                    if (Update.end(true)) {  // true to set the size to the current progress
+                        server.send(200);
+                    } else {
+                        server.send(400, "text/plain", Update.getErrorString());
+                    }
+                }
+                yield();
+                break;
+            }
         }
     }
 

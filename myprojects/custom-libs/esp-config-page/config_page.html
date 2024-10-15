@@ -96,11 +96,55 @@
         .med {
             width: 500px;
         }
+
+        .loader{
+            display: block;
+            position: relative;
+            height: 12px;
+            min-width: 80%;
+            max-width: 80%;
+            border: 1px solid #CFD8DC;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .loader:after{
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: inherit;
+            background: #FF3D00;
+            transition: width 0.5s ease-in-out;
+        }
+
+        /*@keyframes prog {*/
+        /*    to  {   width: 100%;}*/
+        /*}*/
+
     </style>
 </head>
 <body style="background-color: #212121; color: #CFD8DC; font-family: sans-serif; overflow: auto">
 
+<div id="ota-panel">
+    <p class="title-text" style="margin-top: 2rem;">OTA UPDATE</p>
+
+    <div id="ota-start-div" class="cont med" style="align-items: center">
+        <span class="loader" id="ota-loader" style="display: none;"></span>
+        <button id="ota-upload-file-btn" style="display: flex; align-items: center; justify-content: center; font-size: 0.9em; padding: 0.8em" onclick="onOtaUpload()">
+            <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="#e8eaed"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>
+            <span style="margin-left: 0.5rem">Upload file</span>
+        </button>
+
+        <input style="display: none" id="ota-file-input" type='file' name='update' onchange="onOtaUpload(true)" accept=".bin,.bin.gz">
+    </div>
+</div>
+
 <div id="settings-panel">
+
+    <div class="cont med"><hr style="width: 100%;"></div>
+
     <p class="title-text" style="margin-top: 2rem;">SETTINGS</p>
 
     <div style="width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
@@ -187,6 +231,8 @@
 
     const currentPathText = document.getElementById('current-path-text');
     currentPathText.innerText = currentBrowserPath;
+
+    const otaLoader = document.getElementById('ota-loader');
 
     function browserMode() {
         settingsBtn.style.display = 'unset';
@@ -386,6 +432,65 @@
                 updateFiles();
             });
         }
+    }
+
+    function onOtaUpload(hasFile) {
+        const input = document.getElementById('ota-file-input');
+        const btn = document.getElementById('ota-submit');
+
+        if (hasFile) {
+            const file = input.files[0];
+
+            if (file) {
+                settingsDiv.style.display = 'none';
+                fileNavDiv.style.display = 'none';
+                settingsBtn.style.display = 'none';
+                browserBtn.style.display = 'none';
+                document.getElementById('ota-upload-file-btn').style.display = 'none';
+                otaLoader.style.display = 'unset';
+
+                otaLoader.style.width = 0 + '%';
+
+                const formData = new FormData();
+                formData.append('update', file);
+
+                const request = new XMLHttpRequest();
+                request.open('POST', '/config/update');
+
+                let percent = 0;
+
+                request.upload.onprogress = (progress) => {
+                    if(progress.lengthComputable){
+                        var max = progress.total;
+                        var current = progress.loaded;
+
+                        percent = (current * 100)/max;
+                    }
+                };
+
+                let intervalId;
+                intervalId = setInterval(() => {
+                    otaLoader.style.width = percent + '%';
+
+                    if(percent >= 100)
+                    {
+                        clearInterval(intervalId);
+
+                        setTimeout(() => {
+                            alert('Upload completed successfully!');
+                            location.reload();
+                        }, 650);
+                    }
+                }, 600);
+
+                request.send(formData);
+            }
+
+            return;
+        }
+
+        input.value = null;
+        input.click();
     }
 </script>
 </body>
