@@ -17,7 +17,8 @@ namespace ESP_CONFIG_PAGE {
         SAVE,
         CUSTOM_ACTIONS,
         FILES,
-        UPLOAD_FILE
+        DOWNLOAD_FILE,
+        DELETE_FILE
     };
 
     struct EnvVar {
@@ -84,12 +85,16 @@ namespace ESP_CONFIG_PAGE {
             handleRequest(server, username, password, CUSTOM_ACTIONS);
         });
 
-        server.on(F("/config/files"), HTTP_GET, [&server, username, password]() {
+        server.on(F("/config/files"), HTTP_POST, [&server, username, password]() {
             handleRequest(server, username, password, FILES);
         });
 
-        server.on(F("/config/files"), HTTP_POST, [&server, username, password]() {
-            handleRequest(server, username, password, UPLOAD_FILE);
+        server.on(F("/config/files/download"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, DOWNLOAD_FILE);
+        });
+
+        server.on(F("/config/files/delete"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, DELETE_FILE);
         });
     }
 
@@ -136,6 +141,10 @@ namespace ESP_CONFIG_PAGE {
         html.replace(F("{{name}}"), name);
         html.replace(F("{{mac}}"), WiFi.macAddress());
 
+        FSInfo info;
+        LittleFS.info(info);
+        html.replace(F("{{space}}"), String(info.usedBytes) + " bytes / " + String(info.totalBytes) + " bytes");
+
         return html;
     }
 
@@ -151,9 +160,14 @@ namespace ESP_CONFIG_PAGE {
                 server.send(200, F("text/html"), buildPage());
                 break;
             case FILES: {
+                String path = server.arg("plain");
+                if (path.isEmpty()) {
+                    path = "/";
+                }
+
                 String ret;
 
-                Dir dir = LittleFS.openDir("/");
+                Dir dir = LittleFS.openDir(path);
                 while (dir.next()) {
                     ret += dir.fileName() + ":" + (dir.isDirectory() ? "true" : "false") + ":" + dir.fileSize() + ";";
                 }
@@ -161,8 +175,37 @@ namespace ESP_CONFIG_PAGE {
                 server.send(200, "text/plain", ret);
                 break;
             }
-            case UPLOAD_FILE: {
-                server.upload();
+            case DOWNLOAD_FILE: {
+                String path = server.arg("plain");
+                if (path.isEmpty()) {
+                    server.send(404);
+                    return;
+                }
+
+                if (!LittleFS.exists(path)) {
+                    server.send(404);
+                    return;
+                }
+
+                File file = LittleFS.open(path, "r");
+                server.sendHeader("Content-Disposition", file.name());
+                server.streamFile(file, "text");
+                break;
+            }
+            case DELETE_FILE: {
+                String path = server.arg("plain");
+                if (path.isEmpty()) {
+                    server.send(404);
+                    return;
+                }
+
+                if (!LittleFS.exists(path)) {
+                    server.send(404);
+                    return;
+                }
+
+                LittleFS.remove(path);
+                server.send(200);
                 break;
             }
             case CUSTOM_ACTIONS: {

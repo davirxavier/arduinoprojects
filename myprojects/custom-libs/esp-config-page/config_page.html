@@ -123,33 +123,43 @@
 <div id="file-nav" class="cont med">
     <div style="display: flex; align-items: center; justify-content: center">
         <p class="title-text" style="margin-top: 2rem; margin: 0 1rem 0 0">FILE NAVIGATION</p>
-        <button class="icon-btn" title="Upload file">
-            <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>
-        </button>
+<!--        <button class="icon-btn" title="Upload file">-->
+<!--            <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>-->
+<!--        </button>-->
     </div>
 
-    <div id="files-container" class="cont med cont-files" style="margin: 0 auto -1rem auto; gap: 0">
+    <div style="display: flex; align-items: center; justify-content: center;">
+        <button class="icon-btn" title="Go back" onclick="goBack(); return false;" style="width: 24px; height: 24px;">..</button>
+        <button id="current-path-text" class="title-text" style="margin: 0 0 0 0.5rem; padding: 0.5rem;"></button>
+    </div>
+
+    <div id="files-container" class="cont med cont-files" style="margin: 0.5rem auto -1rem auto; gap: 0;">
     </div>
 </div>
 
 <div class="cont med" style="align-items: center; gap: unset">
     <hr style="width: 100%">
     <p class="title-text" style="margin-bottom: -0.1rem;">DEVICE ID: <span style="font-weight: bold">{{name}}</span></p>
-    <p class="title-text">MAC ADDRESS: <span style="font-weight: bold">{{mac}}</span></p>
+    <p class="title-text" style="margin-bottom: -0.1rem;">MAC ADDRESS: <span style="font-weight: bold">{{mac}}</span></p>
+    <p class="title-text">FREE SPACE: <span style="font-weight: bold">{{space}}</span></p>
     <button onclick="browserMode()" id="browser-btn" class="small-btn">File browser</button>
     <button onclick="settingsMode()" id="settings-btn" class="small-btn">Settings</button>
 </div>
 
-<button id="delete-svg" class="icon-btn">
+<button id="delete-svg" class="icon-btn" title="Delete file">
     <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M280-120q-33 0-56.5-23.5T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.5T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z"/></svg>
 </button>
-<button id="download-svg" class="icon-btn" style="margin-right: 0.5rem">
+<button id="download-svg" class="icon-btn" style="margin-right: 0.5rem;" title="Download file">
     <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M480-320 280-520l56-58 104 104v-326h80v326l104-104 56 58-200 200ZM240-160q-33 0-56.5-23.5T160-240v-120h80v120h480v-120h80v120q0 33-23.5 56.5T720-160H240Z"/></svg>
 </button>
-<svg id="file-svg" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>
-<svg id="folder-svg" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640H447l-80-80H160v480l96-320h684L837-217q-8 26-29.5 41.5T760-160H160Zm84-80h516l72-240H316l-72 240Zm0 0 72-240-72 240Zm-84-400v-80 80Z"/></svg>
-</body>
+<button id="file-svg" class="icon-btn" style="margin-right: 0.5rem; cursor: unset;">
+    <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M320-240h320v-80H320v80Zm0-160h320v-80H320v80ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>
+</button>
+<button id="folder-svg" class="icon-btn" style="margin-right: 0.5rem;" title="Open directory">
+    <svg style="cursor: pointer;" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640H447l-80-80H160v480l96-320h684L837-217q-8 26-29.5 41.5T760-160H160Zm84-80h516l72-240H316l-72 240Zm0 0 72-240-72 240Zm-84-400v-80 80Z"/></svg>
+</button>
 <script>
+    let currentBrowserPath = '/';
     const arr = document.querySelectorAll('.env-input');
     if (arr.length === 0) {
         document.getElementById('env-div').style.display = 'none';
@@ -174,6 +184,9 @@
 
     const folderSvg = document.getElementById('folder-svg');
     folderSvg.style.display = 'none';
+
+    const currentPathText = document.getElementById('current-path-text');
+    currentPathText.innerText = currentBrowserPath;
 
     function browserMode() {
         settingsBtn.style.display = 'unset';
@@ -248,7 +261,7 @@
     }
 
     function updateFiles() {
-        doRequest('files', undefined, "GET", (success, response) => {
+        doRequest('files', currentBrowserPath, "POST", (success, response) => {
             if (success) {
                 filesContainer.innerHTML = '';
 
@@ -263,6 +276,10 @@
                 const files = [];
                 const fileSplit = response.split(';');
                 for (const str of fileSplit) {
+                    if (str === '') {
+                        continue;
+                    }
+
                     const split = str.split(':');
                     files.push({
                         name: split[0],
@@ -272,6 +289,7 @@
                 }
 
                 files.sort((f1, f2) => f1.name.localeCompare(f2.name));
+                console.log(files);
 
                 for (const file of files) {
                     const mainElement = document.createElement('button');
@@ -284,6 +302,19 @@
                     const nameIcon = (file.isDir ? folderSvg : fileSvg).cloneNode(true);
                     nameIcon.style.display = 'unset';
                     nameIcon.style.marginRight = '0.5rem';
+
+                    if (file.isDir) {
+                        nameIcon.onclick = () => {
+                            let newPath = currentBrowserPath.substring(0, currentBrowserPath.lastIndexOf('/'));
+                            if (!newPath || newPath === '') {
+                                newPath = '/';
+                            }
+
+                            currentBrowserPath = newPath + file.name;
+                            updateFiles();
+                        };
+                    }
+
                     nameDiv.appendChild(nameIcon);
 
                     const nameSpan = document.createElement('span');
@@ -298,17 +329,64 @@
                         const newDownNode = downloadSvg.cloneNode(true);
                         newDownNode.style.display = 'unset';
                         btnDiv.appendChild(newDownNode);
-                    }
 
-                    const newNode = deleteSvg.cloneNode(true);
-                    newNode.style.display = 'unset';
-                    btnDiv.appendChild(newNode);
+                        newDownNode.onclick = () => {
+                            downloadFile((currentBrowserPath.endsWith('/') ? currentBrowserPath : currentBrowserPath + '/') + file.name);
+                        };
+
+                        const newNode = deleteSvg.cloneNode(true);
+                        newNode.style.display = 'unset';
+                        btnDiv.appendChild(newNode);
+                        newNode.onclick = () => {
+                            deleteFile((currentBrowserPath.endsWith('/') ? currentBrowserPath : currentBrowserPath + '/') + file.name);
+                        };
+                    }
 
                     mainElement.appendChild(btnDiv);
                     filesContainer.appendChild(mainElement);
+                    currentPathText.innerText = currentBrowserPath;
                 }
             }
         });
     }
+
+    function goBack() {
+        currentBrowserPath = currentBrowserPath.substring(0, currentBrowserPath.lastIndexOf('/'));
+        if (!currentBrowserPath || currentBrowserPath === '') {
+            currentBrowserPath = '/';
+        }
+        updateFiles();
+    }
+
+    function downloadFile(path) {
+        const xhr = new XMLHttpRequest();
+
+        xhr.open('POST',  (window.location.href.endsWith('/') ? window.location.href : window.location.href + '/') + 'files/download', true);
+        xhr.responseType = 'blob';
+
+        xhr.onload = (e) => {
+            var blob = e.currentTarget.response;
+            var contentDispo = e.currentTarget.getResponseHeader('Content-Disposition');
+            var file = window.URL.createObjectURL(blob);
+
+            var link = document.createElement("a"); // Or maybe get it from the current document
+            link.target = '_blank';
+            const url = URL.createObjectURL(blob);
+            link.href = url;
+            link.download = contentDispo;
+            link.click();
+        };
+
+        xhr.send(path);
+    }
+
+    function deleteFile(path) {
+        if (confirm(`Delete file "${path}"?`)) {
+            doRequest('files/delete', path, 'POST', () => {
+                updateFiles();
+            });
+        }
+    }
 </script>
+</body>
 </html>
