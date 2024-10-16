@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "WiFiManager.h"
-#include "secrets.h"
 #include "esp-config-page.h"
 
 #define AP_NAME "ESP-DOORBELL-BELL"
@@ -33,10 +32,31 @@ void setup(void) {
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
     manager.autoConnect(AP_NAME, AP_PASSWORD);
 
-    server.on("/ring", HTTP_POST, []() {
+    auto *userEv = new ESP_CONFIG_PAGE::EnvVar{"BELL_USER", ""};
+    auto *passEv = new ESP_CONFIG_PAGE::EnvVar{"BELL_PASSWORD", ""};
+
+    ESP_CONFIG_PAGE::addEnvVar(userEv);
+    ESP_CONFIG_PAGE::addEnvVar(passEv);
+    auto *storage = new ESP_CONFIG_PAGE::LittleFSEnvVarStorage("env");
+    ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(storage);
+
+    ESP_CONFIG_PAGE::setup(server, userEv->value, passEv->value, "ESP-DOORBELL-BELL");
+
+    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", [](ESP8266WebServer &server) {
+        server.send(200);
+        resetConfig();
+    });
+    ESP_CONFIG_PAGE::addCustomAction("Ring", [](ESP8266WebServer &server) {
+        isRinging = true;
+        ringingStart = millis();
+        digitalWrite(RING_PIN, HIGH);
+        server.send(200);
+    });
+
+    server.on("/ring", HTTP_POST, [&userEv, &passEv]() {
         String body = server.arg("plain");
 
-        if (body.equals(String(BELL_USER) + ";" + String(BELL_PASS))) {
+        if (body.equals(String(userEv->value) + ";" + String(passEv->value))) {
             isRinging = true;
             ringingStart = millis();
             digitalWrite(RING_PIN, HIGH);
@@ -44,12 +64,6 @@ void setup(void) {
         } else {
             server.send(401, "text/plain", "INCORRECT AUTH");
         }
-    });
-
-    ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS, "ESP-DOORBELL-BELL");
-    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", [](ESP8266WebServer &server) {
-        server.send(200);
-        resetConfig();
     });
 
     server.begin();

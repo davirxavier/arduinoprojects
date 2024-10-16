@@ -29,21 +29,30 @@ namespace ESP_CONFIG_PAGE {
         String value;
     };
 
+    class EnvVarStorage {
+    public:
+        EnvVarStorage() {}
+        virtual void saveVars(EnvVar **envVars, uint8_t count);
+        virtual uint8_t countVars();
+        virtual void recoverVars(EnvVar *envVars[]);
+    };
+
     struct CustomAction {
         const String key;
         std::function<void(ESP8266WebServer &server)> handler;
     };
 
     EnvVar **envVars;
-    uint8_t envVarCount;
-    uint8_t maxEnvVars;
+    uint8_t envVarCount = 0;
+    uint8_t maxEnvVars = 0;
 
     CustomAction **customActions;
     uint8_t customActionsCount;
     uint8_t maxCustomActions;
 
     String name = "ESP";
-    void (*saveEnvVarsCallback)(EnvVar **envVars, uint8_t envVarCount);
+    void (*saveEnvVarsCallback)(EnvVar **envVars, uint8_t envVarCount) = NULL;
+    EnvVarStorage *envVarStorage = NULL;
 
     String getValueSplit(String data, char separator, int index)
     {
@@ -62,6 +71,17 @@ namespace ESP_CONFIG_PAGE {
         return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
     }
 
+    uint8_t countChar(String str, const char c) {
+        uint8_t delimiterCount = 0;
+        for (const char cstr : str) {
+            if (cstr == ';') {
+                delimiterCount++;
+            }
+        }
+
+        return delimiterCount;
+    }
+
     void handleRequest(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType);
 
     bool handleLogin(ESP8266WebServer &server, String username, String password);
@@ -71,9 +91,6 @@ namespace ESP_CONFIG_PAGE {
 
         customActionsCount = 0;
         maxCustomActions = 0;
-        envVarCount = 0;
-        maxEnvVars = 0;
-        saveEnvVarsCallback = NULL;
         name = nodeName;
 
         server.on(F("/config"), HTTP_GET, [&server, username, password]() {
@@ -113,13 +130,48 @@ namespace ESP_CONFIG_PAGE {
         });
     }
 
-    void addEnvVar(String key, String initialValue) {
+    void setAndUpdateEnvVarStorage(EnvVarStorage *storage) {
+        envVarStorage = storage;
+
+        if (envVarStorage != NULL) {
+            LittleFS.begin();
+
+            uint8_t count = envVarStorage->countVars();
+
+            if (count > 0) {
+                EnvVar *recovered[count];
+                envVarStorage->recoverVars(recovered);
+
+                for (uint8_t i = 0; i < count; i++) {
+                    EnvVar *ev = recovered[i];
+                    if (ev == NULL) {
+                        break;
+                    }
+
+                    for (uint8_t j = 0; j < envVarCount; j++) {
+                        EnvVar *masterEv = envVars[j];
+                        if (masterEv == NULL) {
+                            break;
+                        }
+
+                        if (masterEv->key == ev->key) {
+                            masterEv->value = ev->value;
+                        }
+                    }
+
+                    free(ev);
+                }
+            }
+        }
+    }
+
+    void addEnvVar(EnvVar *ev) {
         if (envVarCount + 1 > maxEnvVars) {
             maxEnvVars = maxEnvVars == 0 ? 1 : ceil(maxEnvVars * 1.5);
             envVars = (EnvVar**) realloc(envVars, sizeof(EnvVar*) * maxEnvVars);
         }
 
-        envVars[envVarCount] = new EnvVar{key, initialValue};
+        envVars[envVarCount] = ev;
         envVarCount++;
     }
 
@@ -146,8 +198,8 @@ namespace ESP_CONFIG_PAGE {
             EnvVar *ev = envVars[i];
 
             envVarsStr += "<div style=\"display: flex; align-items: center; justify-content: space-between;\">"
-                          "<label style=\"margin-right: 1rem\">" + ev->key + "</label>"
-                          "<input id=\"input-" + ev->key + "\" class=\"env-input\" style=\"flex: 1\" value=\"" + ev->value + "\">"
+                          "<label style=\"margin-right: 1rem\" for=\"input-" + ev->key + "\">" + ev->key + "&#8204;</label>"
+                          "<input id=\"input-" + ev->key + "\" autocomplete=\"off\" class=\"env-input\" style=\"flex: 1\" value=\"" + ev->value + "\">"
                           "</div>";
         }
 
@@ -182,7 +234,6 @@ namespace ESP_CONFIG_PAGE {
 
             Update.runAsync(true);
             if (!Update.begin(maxSpace, command)) {  // start with max available size
-                Update.printError(Serial);
                 server.send(400, "text/plain", Update.getErrorString());
             }
 
@@ -242,6 +293,7 @@ namespace ESP_CONFIG_PAGE {
                 File file = LittleFS.open(path, "r");
                 server.sendHeader("Content-Disposition", file.name());
                 server.streamFile(file, "text");
+                file.close();
                 break;
             }
             case DELETE_FILE: {
@@ -283,28 +335,30 @@ namespace ESP_CONFIG_PAGE {
             }
             case SAVE: {
                 if (envVarCount == 0) {
+                    server.send(200);
                     return;
                 }
 
-                String body = server.arg(F("plain"));
-
-                uint8_t delimiterCount = 0;
-                for (const char c : body) {
-                    if (c == ';') {
-                        delimiterCount++;
-                    }
-                }
+                String body = server.arg("plain");
+                uint8_t delimiterCount = countChar(body, ';');
 
                 for (uint8_t i = 0; i < delimiterCount; i++) {
                     String keyAndValue = getValueSplit(body, ';', i);
                     String key = getValueSplit(keyAndValue, ':', 0);
                     String newValue = getValueSplit(keyAndValue, ':', 1);
-                    newValue = newValue.substring(0, newValue.length()-1);
+                    if (newValue.length() > 0 && newValue[newValue.length()-1] == ';') {
+                        newValue = newValue.substring(0, newValue.length()-1);
+                    }
 
                     for (uint8_t j = 0; j < envVarCount; j++) {
                         EnvVar *ev = envVars[j];
-                        if (ev->key.equals(key)) {
+                        if (ev == NULL) {
+                            break;
+                        }
+
+                        if (ev->key == key) {
                             ev->value = newValue;
+                            break;
                         }
                     }
                 }
@@ -312,7 +366,14 @@ namespace ESP_CONFIG_PAGE {
                 if (saveEnvVarsCallback != NULL) {
                     saveEnvVarsCallback(envVars, envVarCount);
                 }
+
+                if (envVarStorage != NULL) {
+                    envVarStorage->saveVars(envVars, envVarCount);
+                }
+
                 server.send(200);
+                delay(100);
+                ESP.reset();
                 break;
             }
             case OTA_END: {
@@ -332,6 +393,67 @@ namespace ESP_CONFIG_PAGE {
             }
         }
     }
+
+    class LittleFSEnvVarStorage : public EnvVarStorage {
+    public:
+        LittleFSEnvVarStorage(const String filePath) : filePath(filePath) {};
+
+        void saveVars(ESP_CONFIG_PAGE::EnvVar **toStore, uint8_t count) override {
+            String toSave;
+
+            for (uint8_t i = 0; i < count; i++) {
+                EnvVar *ev = toStore[i];
+                if (ev == NULL) {
+                    break;
+                }
+
+                toSave += String(ev->key) + ":" + String(ev->value) + ";";
+            }
+
+            File file = LittleFS.open(filePath, "w");
+            file.write(toSave.c_str());
+            file.close();
+        }
+
+        uint8_t countVars() override {
+            if (!LittleFS.exists(filePath)) {
+                return 0;
+            }
+
+            File file = LittleFS.open(filePath, "r");
+            String content = file.readString();
+            file.close();
+
+            return ESP_CONFIG_PAGE::countChar(content, ';');
+        }
+
+        void recoverVars(ESP_CONFIG_PAGE::EnvVar *recovered[]) override {
+            if (!LittleFS.exists(filePath)) {
+                return;
+            }
+
+            File file = LittleFS.open(filePath, "r");
+            String content = file.readString();
+
+            uint8_t count = ESP_CONFIG_PAGE::countChar(content, ';');
+
+            for (uint8_t i = 0; i < count; i++) {
+                String varStr = getValueSplit(content, ';', i);
+                String key = getValueSplit(varStr, ':', 0);
+                String value = getValueSplit(varStr, ':', 1);
+                if (value.length() > 0 && value[value.length()-1] == ';') {
+                    value = value.substring(0, value.length()-1);
+                }
+
+                recovered[i] = new EnvVar{key, value};
+            }
+
+            file.close();
+        }
+
+    private:
+        const String filePath;
+    };
 
 }
 

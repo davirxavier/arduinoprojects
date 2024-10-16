@@ -312,12 +312,6 @@
         otaPanel.style.display = 'unset';
     }
 
-    function setStatus(error, message) {
-        const status = document.getElementById('status');
-        status.style.color = error ? 'red' : 'green';
-        status.innerText = message + '';
-    }
-
     function save() {
         const arr = document.querySelectorAll('.env-input');
 
@@ -329,7 +323,10 @@
         if (window.confirm('Save environment variables?')) {
             let str = '';
             Object.keys(obj).forEach(key => str += `${key}:${obj[key]};`);
-            doRequest('save', str, "POST");
+            doRequest('save', str, "POST", (success, res) => {
+                alert(success ? 'Environment saved successfully!' : `Error while saving: ${res}`);
+                location.reload();
+            });
         }
     }
 
@@ -360,8 +357,6 @@
             if (this.readyState !== 4) return;
 
             const success = this.status === 200;
-            setStatus(!success, success ? 'Success!' : this.responseText);
-
             if (cb) {
                 cb(success, this.responseText);
             }
@@ -397,7 +392,6 @@
                 }
 
                 files.sort((f1, f2) => f1.name.localeCompare(f2.name));
-                console.log(files);
 
                 for (const file of files) {
                     const mainElement = document.createElement('button');
