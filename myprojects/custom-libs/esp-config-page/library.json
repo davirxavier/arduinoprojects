@@ -6,7 +6,6 @@
   "frameworks": "arduino",
   "platforms":
   [
-    "espressif8266",
-    "espressif32"
+    "espressif8266"
   ]
 }

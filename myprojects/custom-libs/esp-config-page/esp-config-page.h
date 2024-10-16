@@ -20,7 +20,8 @@ namespace ESP_CONFIG_PAGE {
         DOWNLOAD_FILE,
         DELETE_FILE,
         OTA_END,
-        OTA_WRITE
+        OTA_WRITE_FIRMWARE,
+        OTA_WRITE_FILESYSTEM
     };
 
     struct EnvVar {
@@ -99,13 +100,17 @@ namespace ESP_CONFIG_PAGE {
             handleRequest(server, username, password, DELETE_FILE);
         });
 
-        server.on(F("/config/update"), HTTP_POST, [&server, username, password]() {
+        server.on(F("/config/update/firmware"), HTTP_POST, [&server, username, password]() {
             handleRequest(server, username, password, OTA_END);
         }, [&server, username, password]() {
-            handleRequest(server, username, password, OTA_WRITE);
+            handleRequest(server, username, password, OTA_WRITE_FIRMWARE);
         });
 
-
+        server.on(F("/config/update/filesystem"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, OTA_END);
+        }, [&server, username, password]() {
+            handleRequest(server, username, password, OTA_WRITE_FILESYSTEM);
+        });
     }
 
     void addEnvVar(String key, String initialValue) {
@@ -133,7 +138,7 @@ namespace ESP_CONFIG_PAGE {
 
         String customActionsStr;
         for (int i = 0; i < customActionsCount; i++) {
-            customActionsStr += "<button onclick=\"customAction('" + customActions[i]->key + "')\">" + customActions[i]->key + "</button>";
+            customActionsStr += "<button class=\"ca-btn\" onclick=\"customAction('" + customActions[i]->key + "')\">" + customActions[i]->key + "</button>";
         }
 
         String envVarsStr;
@@ -156,6 +161,43 @@ namespace ESP_CONFIG_PAGE {
         html.replace(F("{{space}}"), String(info.usedBytes) + " bytes / " + String(info.totalBytes) + " bytes");
 
         return html;
+    }
+
+    void ota(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType) {
+        HTTPUpload& upload = server.upload();
+        int command = U_FLASH;
+        if (reqType == OTA_WRITE_FILESYSTEM) {
+            command = U_FS;
+        }
+
+        if (upload.status == UPLOAD_FILE_START) {
+            WiFiUDP::stopAll();
+
+            uint32_t maxSpace = 0;
+            if (command == U_FLASH) {
+                maxSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+            } else {
+                maxSpace = FS_end - FS_start;
+            }
+
+            Update.runAsync(true);
+            if (!Update.begin(maxSpace, command)) {  // start with max available size
+                Update.printError(Serial);
+                server.send(400, "text/plain", Update.getErrorString());
+            }
+
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                server.send(400, "text/plain", Update.getErrorString());
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (Update.end(true)) {  // true to set the size to the current progress
+                server.send(200);
+            } else {
+                server.send(400, "text/plain", Update.getErrorString());
+            }
+        }
+        yield();
     }
 
     inline void handleRequest(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType) {
@@ -280,31 +322,12 @@ namespace ESP_CONFIG_PAGE {
                 ESP.restart();
                 break;
             }
-            case OTA_WRITE: {
-                HTTPUpload& upload = server.upload();
-
-                if (upload.status == UPLOAD_FILE_START) {
-                    WiFiUDP::stopAll();
-                    uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-
-                    Update.runAsync(true);
-                    if (!Update.begin(maxSketchSpace)) {  // start with max available size
-                        Update.printError(Serial);
-                        server.send(400, "text/plain", Update.getErrorString());
-                    }
-
-                } else if (upload.status == UPLOAD_FILE_WRITE) {
-                    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-                        server.send(400, "text/plain", Update.getErrorString());
-                    }
-                } else if (upload.status == UPLOAD_FILE_END) {
-                    if (Update.end(true)) {  // true to set the size to the current progress
-                        server.send(200);
-                    } else {
-                        server.send(400, "text/plain", Update.getErrorString());
-                    }
-                }
-                yield();
+            case OTA_WRITE_FIRMWARE: {
+                ota(server, username, password, OTA_WRITE_FIRMWARE);
+                break;
+            }
+            case OTA_WRITE_FILESYSTEM: {
+                ota(server, username, password, OTA_WRITE_FILESYSTEM);
                 break;
             }
         }

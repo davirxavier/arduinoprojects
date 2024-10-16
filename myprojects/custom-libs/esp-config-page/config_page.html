@@ -119,19 +119,72 @@
             transition: width 0.5s ease-in-out;
         }
 
-        /*@keyframes prog {*/
-        /*    to  {   width: 100%;}*/
-        /*}*/
+        .noselect {
+            -webkit-touch-callout: none; /* iOS Safari */
+            -webkit-user-select: none; /* Safari */
+            -khtml-user-select: none; /* Konqueror HTML */
+            -moz-user-select: none; /* Old versions of Firefox */
+            -ms-user-select: none; /* Internet Explorer/Edge */
+            user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome, Edge, Opera and Firefox */
+        }
+
+        .toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: rgba(66, 66, 66, 0.5);
+            padding: 0.4rem;
+            border: 1px solid rgba(66, 66, 66, 0.8);
+            border-radius: 4px;
+            font-size: 0.85em;
+            position: relative;
+        }
+
+        .toggle > * {
+            display: block;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+        }
+
+        .toggle > :first-child {
+            margin-right: 0.4rem;
+        }
+
+        .toggle .select {
+            position: absolute;
+            background-color: #CFD8DC;
+            color: rgb(44, 44, 44);
+            cursor: unset;
+            z-index: 9999;
+            transition: left 0.1s ease-in-out;
+        }
+
+        .toggle > *:not(.select) {
+            cursor: pointer;
+        }
+
+        .toggle > *:not(.select):hover {
+            background-color: rgba(89, 89, 89, 0.6);
+            transition: all 0.15s linear;
+        }
 
     </style>
 </head>
 <body style="background-color: #212121; color: #CFD8DC; font-family: sans-serif; overflow: auto">
 
 <div id="ota-panel">
-    <p class="title-text" style="margin-top: 2rem;">OTA UPDATE</p>
+    <p class="title-text" style="margin-top: 2rem; margin-bottom: -1rem">OTA UPDATE</p>
 
     <div id="ota-start-div" class="cont med" style="align-items: center">
         <span class="loader" id="ota-loader" style="display: none;"></span>
+
+        <div id="select-toggle" class="toggle noselect">
+            <span onclick="changeUploadMode(this, true)">Firmware</span>
+            <span onclick="changeUploadMode(this, false)">Filesystem</span>
+            <span class="select">Firmware</span>
+        </div>
+
         <button id="ota-upload-file-btn" style="display: flex; align-items: center; justify-content: center; font-size: 0.9em; padding: 0.8em" onclick="onOtaUpload()">
             <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="#e8eaed"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>
             <span style="margin-left: 0.5rem">Upload file</span>
@@ -165,8 +218,8 @@
 </div>
 
 <div id="file-nav" class="cont med">
-    <div style="display: flex; align-items: center; justify-content: center">
-        <p class="title-text" style="margin-top: 2rem; margin: 0 1rem 0 0">FILE NAVIGATION</p>
+    <div style="display: flex; align-items: center; justify-content: center; margin-top: 2rem;">
+        <p class="title-text" style="margin: 0 0 1.2rem 0">FILE NAVIGATION</p>
 <!--        <button class="icon-btn" title="Upload file">-->
 <!--            <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M440-200h80v-167l64 64 56-57-160-160-160 160 57 56 63-63v167ZM240-80q-33 0-56.5-23.5T160-160v-640q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H240Zm280-520v-200H240v640h480v-440H520ZM240-800v200-200 640-640Z"/></svg>-->
 <!--        </button>-->
@@ -203,10 +256,16 @@
     <svg style="cursor: pointer;" xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240l80 80h320q33 0 56.5 23.5T880-640H447l-80-80H160v480l96-320h684L837-217q-8 26-29.5 41.5T760-160H160Zm84-80h516l72-240H316l-72 240Zm0 0 72-240-72 240Zm-84-400v-80 80Z"/></svg>
 </button>
 <script>
+    let isUploadFirmware = true;
     let currentBrowserPath = '/';
     const arr = document.querySelectorAll('.env-input');
     if (arr.length === 0) {
         document.getElementById('env-div').style.display = 'none';
+    }
+
+    const caArr = document.querySelectorAll('.ca-btn');
+    if (caArr.length === 0) {
+        document.getElementById('settings-panel').style.display = 'none';
     }
 
     const filesContainer = document.getElementById('files-container');
@@ -214,6 +273,7 @@
     const browserBtn = document.getElementById('browser-btn');
     const fileNavDiv = document.getElementById('file-nav');
     const settingsDiv = document.getElementById('settings-panel');
+    const otaPanel = document.getElementById('ota-panel');
     settingsBtn.style.display = 'none';
     fileNavDiv.style.display = 'none';
 
@@ -239,6 +299,7 @@
         browserBtn.style.display = 'none';
         settingsDiv.style.display = 'none';
         fileNavDiv.style.display = 'unset';
+        otaPanel.style.display = 'none';
 
         updateFiles();
     }
@@ -248,6 +309,7 @@
         browserBtn.style.display = 'unset';
         settingsDiv.style.display = 'unset';
         fileNavDiv.style.display = 'none';
+        otaPanel.style.display = 'unset';
     }
 
     function setStatus(error, message) {
@@ -447,6 +509,7 @@
                 settingsBtn.style.display = 'none';
                 browserBtn.style.display = 'none';
                 document.getElementById('ota-upload-file-btn').style.display = 'none';
+                document.getElementById('select-toggle').style.display = 'none';
                 otaLoader.style.display = 'unset';
 
                 otaLoader.style.width = 0 + '%';
@@ -455,7 +518,7 @@
                 formData.append('update', file);
 
                 const request = new XMLHttpRequest();
-                request.open('POST', '/config/update');
+                request.open('POST', '/config/update/' + (isUploadFirmware ? 'firmware' : 'filesystem'));
 
                 let percent = 0;
 
@@ -468,8 +531,14 @@
                     }
                 };
 
+                let hasError = false;
                 let intervalId;
                 intervalId = setInterval(() => {
+                    if (hasError) {
+                        clearInterval(intervalId);
+                        return;
+                    }
+
                     otaLoader.style.width = percent + '%';
 
                     if(percent >= 100)
@@ -484,6 +553,17 @@
                 }, 600);
 
                 request.send(formData);
+
+                request.onreadystatechange = function () {
+                    if (this.readyState !== 4) return;
+
+                    const success = this.status === 200;
+                    if (!success) {
+                        hasError = true;
+                        alert(`Error during OTA update: ${this.responseText}`);
+                        location.reload();
+                    }
+                };
             }
 
             return;
@@ -492,6 +572,17 @@
         input.value = null;
         input.click();
     }
+
+    function changeUploadMode(clickedElement, isFirmware) {
+        isUploadFirmware = isFirmware;
+
+        const toggleDiv = document.getElementById('select-toggle');
+        const selectElement = toggleDiv.querySelector('.select');
+        selectElement.style.left = clickedElement.offsetLeft + 'px';
+        selectElement.innerText = clickedElement.innerText;
+    }
+
+    changeUploadMode(document.getElementById('select-toggle').children[0], true);
 </script>
 </body>
 </html>

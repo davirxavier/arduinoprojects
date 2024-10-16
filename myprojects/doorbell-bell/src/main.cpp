@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "WiFiManager.h"
-#include "ElegantOTA.h"
 #include "secrets.h"
 #include "esp-config-page.h"
 
@@ -47,9 +46,6 @@ void setup(void) {
         }
     });
 
-    ElegantOTA.begin(&server);
-    ElegantOTA.setAuth(BELL_USER, BELL_PASS);
-
     ESP_CONFIG_PAGE::setup(server, BELL_USER, BELL_PASS, "ESP-DOORBELL-BELL");
     ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", [](ESP8266WebServer &server) {
         server.send(200);
@@ -61,7 +57,6 @@ void setup(void) {
 
 void loop(void) {
     server.handleClient();
-    ElegantOTA.loop();
 
     if (isRinging && millis() - ringingStart > RING_MILLIS) {
         isRinging = false;
