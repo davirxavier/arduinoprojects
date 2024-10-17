@@ -4,8 +4,7 @@
 #include "FastBot.h"
 #include "logger.h"
 #include <TZ.h>
-#include "ElegantOTA.h"
-#include "secrets.h"
+#include "esp-config-page.h"
 
 #define WIRELESS_DOORBELL_PIN 14
 #define BUTTON_PIN 13
@@ -27,8 +26,13 @@ String resetCommand = "@notificatronbot resetar";
 String cleanLogsCommand = "@notificatronbot limpar";
 String ringCommand = "@notificatronbot tocar";
 
-String chatId = String(TELEGRAM_CHAT_ID);
-String apiKey = String(TELEGRAM_API_KEY);
+auto *userVar = new ESP_CONFIG_PAGE::EnvVar{"ADMIN_USERNAME", ""};
+auto *passVar = new ESP_CONFIG_PAGE::EnvVar{"ADMIN_PASSWORD", ""};
+auto *bellUser = new ESP_CONFIG_PAGE::EnvVar{"BELL_USER", ""};
+auto *bellPass = new ESP_CONFIG_PAGE::EnvVar{"BELL_PASS", ""};
+auto *bellHost = new ESP_CONFIG_PAGE::EnvVar{"BELL_IP", ""};
+auto *telegramApiKeyVar = new ESP_CONFIG_PAGE::EnvVar{"TELEGRAM_API_KEY", ""};
+auto *telegramChatIdVar = new ESP_CONFIG_PAGE::EnvVar{"TELEGRAM_CHAT_ID", ""};
 
 WiFiManager manager;
 FastBot bot;
@@ -54,8 +58,8 @@ void IRAM_ATTR resetConfig() {
 void callHttpRing() {
     SERIAL_LOG_LN("Sending doorbell wireless signal.");
 
-    http.begin(wifiClient, BELL_HOSTNAME);
-    int response = http.POST(String(BELL_USER) + ";" + String(BELL_PASS));
+    http.begin(wifiClient, bellHost->value);
+    int response = http.POST(bellUser->value + ";" + bellPass->value);
     http.end();
 
     SERIAL_LOG_LN("Signal response: " + String(response));
@@ -73,8 +77,10 @@ void IRAM_ATTR button_interrupt()
 }
 
 void onMaxLogsFile(File file) {
-//    bot.sendMessage("Tamanho de arquivo de logs excedido, enviando os logs atuais.", credentials.chatId);
-//    bot.sendFile(file, FB_DOC, "logs.txt", credentials.chatId);
+//    bot.sendMessage("Tamanho de arquivo de logs excedido, enviando os logs atuais.", telegramChatIdVar->value);
+//    bot.sendFile(file, FB_DOC, "logs.txt", telegramChatIdVar->value);
+//
+//    LittleFS.remove(file.fullName());
 }
 
 void handleMessage(FB_msg& msg) {
@@ -82,7 +88,7 @@ void handleMessage(FB_msg& msg) {
     SERIAL_LOG(msg.chatID);
     SERIAL_LOG_LN(" - " + msg.text);
 
-    if (msg.chatID != chatId) {
+    if (msg.chatID != telegramChatIdVar->value) {
         return;
     }
 
@@ -98,7 +104,7 @@ void handleMessage(FB_msg& msg) {
         bot.replyMessage(F("Campainha desligada."), msg.messageID, msg.chatID);
     } else if (msg.text.equals(logsCommand)) {
         File file = LittleFS.open(LOGS_FILE, "r");
-        bot.sendFile(file, FB_DOC, "logs.txt", chatId);
+        bot.sendFile(file, FB_DOC, "logs.txt", telegramChatIdVar->value);
         file.close();
     } else if (msg.text.equals(resetCommand)) {
         bot.replyMessage(F("Resetando configurações do sistema, será necessário reconfigurá-lo."), msg.messageID, msg.chatID);
@@ -155,14 +161,36 @@ void setup() {
                     MAX_LOG_SIZE_BYTES,
                     onMaxLogsFile);
 
-    ElegantOTA.begin(&server);
-    ElegantOTA.setAuth(BELL_USER, BELL_PASS);
+    delay(200);
+
+    ESP_CONFIG_PAGE::addEnvVar(userVar);
+    ESP_CONFIG_PAGE::addEnvVar(passVar);
+    ESP_CONFIG_PAGE::addEnvVar(bellUser);
+    ESP_CONFIG_PAGE::addEnvVar(bellPass);
+    ESP_CONFIG_PAGE::addEnvVar(bellHost);
+    ESP_CONFIG_PAGE::addEnvVar(telegramApiKeyVar);
+    ESP_CONFIG_PAGE::addEnvVar(telegramChatIdVar);
+
+    auto *storage = new ESP_CONFIG_PAGE::LittleFSEnvVarStorage("env.txt");
+    ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(storage);
+
+    ESP_CONFIG_PAGE::setup(server, userVar->value, passVar->value, "ESP-DOORBELL-MASTER");
+
+    ESP_CONFIG_PAGE::addCustomAction("Reset wireless settings", [](ESP8266WebServer &server) {
+        server.send(200);
+        resetConfig();
+    });
+    ESP_CONFIG_PAGE::addCustomAction("Ring test", [](ESP8266WebServer &server) {
+        hasSignal = true;
+        server.send(200);
+    });
+
     server.begin();
 
     bot.skipUpdates();
-    bot.setToken(apiKey);
+    bot.setToken(telegramApiKeyVar->value);
     bot.attach(handleMessage);
-    bot.sendMessage("Campainha online.", chatId);
+    bot.sendMessage("Campainha online.", telegramChatIdVar->value);
 
     SERIAL_LOG_LN("Startup");
 }
@@ -171,7 +199,6 @@ void loop() {
     dxlogger::update();
     bot.tick();
     server.handleClient();
-    ElegantOTA.loop();
 
     if (isOn && digitalRead(BUTTON_PIN) == LOW) {
         hasSignal = true;
@@ -180,7 +207,7 @@ void loop() {
     if (isOn && hasSignal && millis() - lastRang > 250) {
         if (millis() - lastSentMessage > 3000) {
             SERIAL_LOG_LN("Sending message.");
-            uint8_t res = bot.sendMessage(NOTIF_TEXT, chatId);
+            uint8_t res = bot.sendMessage(NOTIF_TEXT, telegramChatIdVar->value);
             SERIAL_LOG("Message sent: ");
             SERIAL_LOG_LN(String(res));
 

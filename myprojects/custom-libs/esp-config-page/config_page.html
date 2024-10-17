@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{name}} - Config</title>
+    <title>ESP Config</title>
 
     <style>
         button {
@@ -200,8 +200,7 @@
 
     <p class="title-text" style="margin-top: 2rem;">SETTINGS</p>
 
-    <div style="width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
-        {{custom-actions}}
+    <div id="custom-actions-div" style="width: 300px; margin: 2rem auto 0 auto; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 1rem;">
     </div>
 
     <div id="env-div" class="cont med">
@@ -209,7 +208,8 @@
 
         <p class="title-text" style="margin-top: 0">ENVIRONMENT VARIABLES</p>
 
-        {{env}}
+        <div id="env-container" class="cont med">
+        </div>
 
         <button onclick="save()" style="margin-top: 2rem; width: fit-content; margin-left: auto; margin-right: auto">Save</button>
 
@@ -236,9 +236,10 @@
 
 <div class="cont med" style="align-items: center; gap: unset">
     <hr style="width: 100%">
-    <p class="title-text" style="margin-bottom: -0.1rem;">DEVICE ID: <span style="font-weight: bold">{{name}}</span></p>
-    <p class="title-text" style="margin-bottom: -0.1rem;">MAC ADDRESS: <span style="font-weight: bold">{{mac}}</span></p>
-    <p class="title-text">FREE SPACE: <span style="font-weight: bold">{{space}}</span></p>
+    <p class="title-text" style="margin-bottom: -0.1rem;">DEVICE ID: <span id="text-id" style="font-weight: bold"></span></p>
+    <p class="title-text" style="margin-bottom: -0.1rem;">MAC ADDRESS: <span id="text-mac" style="font-weight: bold"></span></p>
+    <p class="title-text" style="margin-bottom: -0.1rem;">FREE SPACE: <span id="text-space-free" style="font-weight: bold"></span> bytes / <span id="text-space-total" style="font-weight: bold"></span> bytes</p>
+    <p class="title-text">FREE HEAP: <span id="text-ram" style="font-weight: bold"></span> bytes</p>
     <button onclick="browserMode()" id="browser-btn" class="small-btn">File browser</button>
     <button onclick="settingsMode()" id="settings-btn" class="small-btn">Settings</button>
 </div>
@@ -258,15 +259,6 @@
 <script>
     let isUploadFirmware = true;
     let currentBrowserPath = '/';
-    const arr = document.querySelectorAll('.env-input');
-    if (arr.length === 0) {
-        document.getElementById('env-div').style.display = 'none';
-    }
-
-    const caArr = document.querySelectorAll('.ca-btn');
-    if (caArr.length === 0) {
-        document.getElementById('settings-panel').style.display = 'none';
-    }
 
     const filesContainer = document.getElementById('files-container');
     const settingsBtn = document.getElementById('settings-btn');
@@ -312,6 +304,37 @@
         otaPanel.style.display = 'unset';
     }
 
+    function unescapeStr(str) {
+        return str ? str.replaceAll('|:', ":").replaceAll('|;', ";").replaceAll("|+", "+") : "";
+    }
+
+    function escapeStr(str) {
+        return str ? str.replaceAll(':', "|:").replaceAll(';', "|;").replaceAll("+", "|+") : "";
+    }
+
+    function splitEscaped(str, separator) {
+        const ret = [];
+        let currentStr = 0;
+        let lastIndex = 0;
+        let escaped = false;
+
+        for (let i = 0; i < str.length; i++) {
+            const c = str[i];
+
+            if (c == '|' && !escaped) {
+                escaped = true;
+            } else if (c == separator && !escaped) {
+                ret[currentStr] = str.substring(lastIndex, i);
+                lastIndex = i+1;
+                currentStr++;
+            } else {
+                escaped = false;
+            }
+        }
+
+        return ret;
+    }
+
     function save() {
         const arr = document.querySelectorAll('.env-input');
 
@@ -322,7 +345,7 @@
 
         if (window.confirm('Save environment variables?')) {
             let str = '';
-            Object.keys(obj).forEach(key => str += `${key}:${obj[key]};`);
+            Object.keys(obj).forEach(key => str += `${escapeStr(key)}:${escapeStr(obj[key])}:;`);
             doRequest('save', str, "POST", (success, res) => {
                 alert(success ? 'Environment saved successfully!' : `Error while saving: ${res}`);
                 location.reload();
@@ -577,6 +600,97 @@
     }
 
     changeUploadMode(document.getElementById('select-toggle').children[0], true);
+
+    function updateInfo() {
+        doRequest('info', undefined, 'GET', (success, response) => {
+            if (success) {
+                const split = splitEscaped(response, '+');
+                const name = split[0];
+                const mac = split[1];
+                const usedSpace = split[2];
+                const spaceTotal = split[3];
+                const freeHeap = split[4];
+                const env = split[5];
+                const actions = split[6];
+
+                document.title = name + ' - Config';
+                document.getElementById('text-id').innerText = name;
+                document.getElementById('text-mac').innerText = mac;
+                document.getElementById('text-space-free').innerText = usedSpace;
+                document.getElementById('text-space-total').innerText = spaceTotal;
+                document.getElementById('text-ram').innerText = freeHeap;
+
+                const envCont = document.getElementById('env-container');
+                envCont.innerHTML = '';
+
+                const envSplit = splitEscaped(env, ';');
+                for (const keyValue of envSplit) {
+                    const kvSplit = splitEscaped(keyValue, ':');
+                    const key = unescapeStr(kvSplit[0]);
+                    const value = unescapeStr(kvSplit[1]);
+
+                    if (!key || key === '') {
+                        continue;
+                    }
+
+                    const id = 'input-' + key;
+
+                    const mainElement = document.createElement('div');
+                    mainElement.style = 'display: flex; align-items: center; justify-content: space-between;';
+
+                    const label = document.createElement('label');
+                    label.style = 'margin-right: 1rem';
+                    label.for = id;
+                    label.innerText = key;
+                    mainElement.appendChild(label);
+
+                    const input = document.createElement('input');
+                    input.setAttribute('autocomplete', 'off');
+                    input.classList.add('env-input');
+                    input.style = 'flex: 1;';
+                    input.value = value;
+                    input.id = id;
+                    mainElement.appendChild(input);
+
+                    envCont.appendChild(mainElement);
+                }
+
+                const caCont = document.getElementById('custom-actions-div');
+                caCont.innerHTML = '';
+
+                const caSplit = splitEscaped(actions, ';');
+                for (const caEscaped of caSplit) {
+                    const ca = unescapeStr(caEscaped);
+
+                    if (ca === '') {
+                        continue;
+                    }
+
+                    const button = document.createElement('button');
+                    button.classList.add('ca-btn');
+                    button.onclick = () => customAction(ca);
+                    button.innerText = ca;
+                    caCont.appendChild(button);
+                }
+
+                if (envSplit.length === 0) {
+                    document.getElementById('env-div').style.display = 'none';
+                }
+
+                if (caSplit.length === 0) {
+                    document.getElementById('custom-actions-div').style.display = 'none';
+                }
+
+                if (envSplit.length === 0 && caSplit.length === 0) {
+                    document.getElementById('settings-panel').style.display = 'none';
+                }
+            } else {
+                alert('Error while trying to fetch info from controller.')
+            }
+        });
+    }
+
+    updateInfo();
 </script>
 </body>
 </html>

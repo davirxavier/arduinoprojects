@@ -9,6 +9,7 @@
 #include "ESP8266WebServer.h"
 #include "config-html.h"
 #include "LittleFS.h"
+#include "WiFiUdp.h"
 
 namespace ESP_CONFIG_PAGE {
 
@@ -21,7 +22,8 @@ namespace ESP_CONFIG_PAGE {
         DELETE_FILE,
         OTA_END,
         OTA_WRITE_FIRMWARE,
-        OTA_WRITE_FILESYSTEM
+        OTA_WRITE_FILESYSTEM,
+        INFO
     };
 
     struct EnvVar {
@@ -50,42 +52,145 @@ namespace ESP_CONFIG_PAGE {
     uint8_t customActionsCount;
     uint8_t maxCustomActions;
 
-    String name = "ESP";
+    String name;
     void (*saveEnvVarsCallback)(EnvVar **envVars, uint8_t envVarCount) = NULL;
     EnvVarStorage *envVarStorage = NULL;
 
-    String getValueSplit(String data, char separator, int index)
-    {
-        int found = 0;
-        int strIndex[] = {0, -1};
-        int maxIndex = data.length()-1;
+    const char escapeChars[] = {':', ';', '+', '\0'};
+    const char escaper = '|';
 
-        for(int i=0; i<=maxIndex && found<=index; i++){
-            if(data.charAt(i)==separator || i==maxIndex){
-                found++;
-                strIndex[0] = strIndex[1]+1;
-                strIndex[1] = (i == maxIndex) ? i+1 : i;
+    int sizeWithEscaping(const char *str) {
+        int len = strlen(str);
+        int escapedCount = 0;
+
+        for (int i = 0; i < len; i++) {
+            const char c = str[i];
+            if (strchr(escapeChars, c)) {
+                escapedCount++;
             }
         }
 
-        return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+        return escapedCount + len + 1;
     }
 
-    uint8_t countChar(String str, const char c) {
+    int caSize() {
+        int infoSize = 0;
+
+        for (uint8_t i = 0; i < customActionsCount; i++) {
+            CustomAction *ca = customActions[i];
+            infoSize += sizeWithEscaping(ca->key.c_str()) + 4;
+        }
+
+        return infoSize;
+    }
+
+    int envSize() {
+        int infoSize = 0;
+
+        for (uint8_t i = 0; i < envVarCount; i++) {
+            EnvVar *ev = envVars[i];
+            infoSize += sizeWithEscaping(ev->key.c_str()) + sizeWithEscaping(ev->value.c_str()) + 4;
+        }
+
+        return infoSize;
+    }
+
+    void unescape(char buf[], const char *source) {
+        unsigned int len = strlen(source);
+        bool escaped = false;
+        int bufIndex = 0;
+
+        for (unsigned int i = 0; i < len; i++) {
+            const char c = source[i];
+
+            if (c == escaper && !escaped) {
+                escaped = true;
+            } else if (strchr(escapeChars, c) && !escaped) {
+                buf[bufIndex] = c;
+                bufIndex++;
+            } else {
+                escaped = false;
+                buf[bufIndex] = c;
+                bufIndex++;
+            }
+        }
+
+        buf[bufIndex] = '\0';
+    }
+
+    void escape(char buf[], const char *source) {
+        int len = strlen(source);
+        int bufIndex = 0;
+
+        for (int i = 0; i < len; i++) {
+            if (strchr(escapeChars, source[i])) {
+                buf[bufIndex] = escaper;
+                bufIndex++;
+            }
+
+            buf[bufIndex] = source[i];
+            bufIndex++;
+        }
+
+        buf[bufIndex] = '\0';
+    }
+
+    uint8_t countChar(const char str[], const char separator) {
         uint8_t delimiterCount = 0;
-        for (const char cstr : str) {
-            if (cstr == ';') {
-                delimiterCount++;
+        bool escaped = false;
+        int len = strlen(str);
+
+        for (int i = 0; i < len; i++) {
+            char cstr = str[i];
+            if (cstr == escaper && !escaped) {
+              escaped = true;
+            } else if (cstr == separator && !escaped) {
+              delimiterCount++;
+            } else {
+              escaped = false;
             }
         }
 
         return delimiterCount;
     }
 
+    void getValueSplit(const char data[], char separator, std::shared_ptr<char[]> ret[])
+    {
+        uint8_t currentStr = 0;
+        int lastIndex = 0;
+        bool escaped = false;
+        unsigned int len = strlen(data);
+
+        for (unsigned int i = 0; i < len; i++) {
+            const char c = data[i];
+
+            if (c == '|' && !escaped) {
+                escaped = true;
+            } else if (c == separator && !escaped) {
+                int newLen = i - lastIndex + 1;
+                ret[currentStr] = std::make_unique<char[]>(newLen);
+
+                strncpy(ret[currentStr].get(), data + lastIndex, newLen-1);
+                ret[currentStr].get()[newLen-1] = '\0';
+
+                lastIndex = i+1;
+                currentStr++;
+            } else {
+                escaped = false;
+            }
+        }
+    }
+
     void handleRequest(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType);
 
     bool handleLogin(ESP8266WebServer &server, String username, String password);
 
+    /**
+     * @param server
+     * @param username
+     * @param password
+     * @param nodeName - DOT NOT USE THE CHARACTERS ":", ";" or "+"
+     */
     void setup(ESP8266WebServer &server, String username, String password, String nodeName) {
         LittleFS.begin();
 
@@ -95,6 +200,10 @@ namespace ESP_CONFIG_PAGE {
 
         server.on(F("/config"), HTTP_GET, [&server, username, password]() {
             handleRequest(server, username, password, CONFIG_PAGE);
+        });
+
+        server.on(F("/config/info"), HTTP_GET, [&server, username, password]() {
+            handleRequest(server, username, password, INFO);
         });
 
         server.on(F("/config/save"), HTTP_POST, [&server, username, password]() {
@@ -185,36 +294,6 @@ namespace ESP_CONFIG_PAGE {
         customActionsCount++;
     }
 
-    String buildPage() {
-        String html = ESP_CONFIG_HTML;
-
-        String customActionsStr;
-        for (int i = 0; i < customActionsCount; i++) {
-            customActionsStr += "<button class=\"ca-btn\" onclick=\"customAction('" + customActions[i]->key + "')\">" + customActions[i]->key + "</button>";
-        }
-
-        String envVarsStr;
-        for (int i = 0; i < envVarCount; i++) {
-            EnvVar *ev = envVars[i];
-
-            envVarsStr += "<div style=\"display: flex; align-items: center; justify-content: space-between;\">"
-                          "<label style=\"margin-right: 1rem\" for=\"input-" + ev->key + "\">" + ev->key + "&#8204;</label>"
-                          "<input id=\"input-" + ev->key + "\" autocomplete=\"off\" class=\"env-input\" style=\"flex: 1\" value=\"" + ev->value + "\">"
-                          "</div>";
-        }
-
-        html.replace(F("{{custom-actions}}"), customActionsStr);
-        html.replace(F("{{env}}"), envVarsStr);
-        html.replace(F("{{name}}"), name);
-        html.replace(F("{{mac}}"), WiFi.macAddress());
-
-        FSInfo info;
-        LittleFS.info(info);
-        html.replace(F("{{space}}"), String(info.usedBytes) + " bytes / " + String(info.totalBytes) + " bytes");
-
-        return html;
-    }
-
     void ota(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType) {
         HTTPUpload& upload = server.upload();
         int command = U_FLASH;
@@ -260,7 +339,7 @@ namespace ESP_CONFIG_PAGE {
 
         switch (reqType) {
             case CONFIG_PAGE:
-                server.send(200, F("text/html"), buildPage());
+                server.send(200, F("text/html"), ESP_CONFIG_HTML);
                 break;
             case FILES: {
                 String path = server.arg("plain");
@@ -340,15 +419,26 @@ namespace ESP_CONFIG_PAGE {
                 }
 
                 String body = server.arg("plain");
-                uint8_t delimiterCount = countChar(body, ';');
 
-                for (uint8_t i = 0; i < delimiterCount; i++) {
-                    String keyAndValue = getValueSplit(body, ';', i);
-                    String key = getValueSplit(keyAndValue, ':', 0);
-                    String newValue = getValueSplit(keyAndValue, ':', 1);
-                    if (newValue.length() > 0 && newValue[newValue.length()-1] == ';') {
-                        newValue = newValue.substring(0, newValue.length()-1);
+                uint8_t size = countChar(body.c_str(), ';');
+                std::shared_ptr<char[]> split[size];
+                getValueSplit(body.c_str(), ';', split);
+
+                for (uint8_t i = 0; i < size; i++) {
+                    uint8_t keyAndValueSize = countChar(split[i].get(), ':');
+
+                    if (keyAndValueSize < 2) {
+                        continue;
                     }
+
+                    std::shared_ptr<char[]> keyAndValue[keyAndValueSize];
+                    getValueSplit(split[i].get(), ':', keyAndValue);
+
+                    char key[strlen(keyAndValue[0].get())];
+                    char newValue[strlen(keyAndValue[1].get())];
+
+                    unescape(key, keyAndValue[0].get());
+                    unescape(newValue, keyAndValue[1].get());
 
                     for (uint8_t j = 0; j < envVarCount; j++) {
                         EnvVar *ev = envVars[j];
@@ -391,6 +481,60 @@ namespace ESP_CONFIG_PAGE {
                 ota(server, username, password, OTA_WRITE_FILESYSTEM);
                 break;
             }
+            case INFO: {
+                FSInfo fsInfo;
+                LittleFS.info(fsInfo);
+                String usedBytes = String(fsInfo.usedBytes);
+                String totalBytes = String(fsInfo.totalBytes);
+                String freeHeap = String(ESP.getFreeHeap());
+
+                int nameLen = name.length();
+                int infoSize = nameLen + WiFi.macAddress().length() + usedBytes.length() + totalBytes.length() + freeHeap.length() + 64;
+                infoSize += envSize() + caSize();
+
+                char buf[infoSize];
+
+                strcpy(buf, name.c_str());
+                strcat(buf, "+");
+                strcat(buf, WiFi.macAddress().c_str());
+                strcat(buf, "+");
+                strcat(buf, usedBytes.c_str());
+                strcat(buf, "+");
+                strcat(buf, totalBytes.c_str());
+                strcat(buf, "+");
+                strcat(buf, freeHeap.c_str());
+                strcat(buf, "+");
+
+                for (uint8_t i = 0; i < envVarCount; i++) {
+                    EnvVar *ev = envVars[i];
+
+                    char bufKey[sizeWithEscaping(ev->key.c_str())];
+                    char bufVal[sizeWithEscaping(ev->value.c_str())];
+
+                    escape(bufKey, ev->key.c_str());
+                    escape(bufVal, ev->value.c_str());
+
+                    strcat(buf, bufKey);
+                    strcat(buf, ":");
+                    strcat(buf, bufVal);
+                    strcat(buf, ":;");
+                }
+                strcat(buf, "+");
+
+                for (uint8_t i = 0; i < customActionsCount; i++) {
+                    CustomAction *ca = customActions[i];
+
+                    char bufKey[sizeWithEscaping(ca->key.c_str())];
+                    escape(bufKey, ca->key.c_str());
+
+                    strcat(buf, bufKey);
+                    strcat(buf, ";");
+                }
+                strcat(buf, "+");
+
+                server.send(200, "text/plain", buf);
+                break;
+            }
         }
     }
 
@@ -399,7 +543,9 @@ namespace ESP_CONFIG_PAGE {
         LittleFSEnvVarStorage(const String filePath) : filePath(filePath) {};
 
         void saveVars(ESP_CONFIG_PAGE::EnvVar **toStore, uint8_t count) override {
-            String toSave;
+            int size = envSize() + 32;
+            char buf[size];
+            strcpy(buf, "");
 
             for (uint8_t i = 0; i < count; i++) {
                 EnvVar *ev = toStore[i];
@@ -407,11 +553,20 @@ namespace ESP_CONFIG_PAGE {
                     break;
                 }
 
-                toSave += String(ev->key) + ":" + String(ev->value) + ";";
+                char bufKey[sizeWithEscaping(ev->key.c_str())];
+                char bufVal[sizeWithEscaping(ev->value.c_str())];
+
+                escape(bufKey, ev->key.c_str());
+                escape(bufVal, ev->value.c_str());
+
+                strcat(buf, bufKey);
+                strcat(buf, ":");
+                strcat(buf, bufVal);
+                strcat(buf, ":;");
             }
 
             File file = LittleFS.open(filePath, "w");
-            file.write(toSave.c_str());
+            file.write(buf);
             file.close();
         }
 
@@ -424,7 +579,7 @@ namespace ESP_CONFIG_PAGE {
             String content = file.readString();
             file.close();
 
-            return ESP_CONFIG_PAGE::countChar(content, ';');
+            return ESP_CONFIG_PAGE::countChar(content.c_str(), ';');
         }
 
         void recoverVars(ESP_CONFIG_PAGE::EnvVar *recovered[]) override {
@@ -435,17 +590,27 @@ namespace ESP_CONFIG_PAGE {
             File file = LittleFS.open(filePath, "r");
             String content = file.readString();
 
-            uint8_t count = ESP_CONFIG_PAGE::countChar(content, ';');
+            uint8_t count = countChar(content.c_str(), ';');
+            std::shared_ptr<char[]> split[count];
+            getValueSplit(content.c_str(), ';', split);
 
             for (uint8_t i = 0; i < count; i++) {
-                String varStr = getValueSplit(content, ';', i);
-                String key = getValueSplit(varStr, ':', 0);
-                String value = getValueSplit(varStr, ':', 1);
-                if (value.length() > 0 && value[value.length()-1] == ';') {
-                    value = value.substring(0, value.length()-1);
+                uint8_t varStrCount = countChar(split[i].get(), ':');
+
+                if (varStrCount < 2) {
+                    continue;
                 }
 
-                recovered[i] = new EnvVar{key, value};
+                std::shared_ptr<char[]> varStr[varStrCount];
+                getValueSplit(split[i].get(), ':', varStr);
+
+                char key[strlen(varStr[0].get())];
+                char val[strlen(varStr[1].get())];
+
+                unescape(key, varStr[0].get());
+                unescape(val, varStr[1].get());
+
+                recovered[i] = new EnvVar{String(key), String(val)};
             }
 
             file.close();

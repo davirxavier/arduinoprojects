@@ -37,7 +37,7 @@ void setup(void) {
 
     ESP_CONFIG_PAGE::addEnvVar(userEv);
     ESP_CONFIG_PAGE::addEnvVar(passEv);
-    auto *storage = new ESP_CONFIG_PAGE::LittleFSEnvVarStorage("env");
+    auto *storage = new ESP_CONFIG_PAGE::LittleFSEnvVarStorage("env2.txt");
     ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(storage);
 
     ESP_CONFIG_PAGE::setup(server, userEv->value, passEv->value, "ESP-DOORBELL-BELL");
