@@ -53,10 +53,10 @@ void setup(void) {
         server.send(200);
     });
 
-    server.on("/ring", HTTP_POST, [&userEv, &passEv]() {
+    server.on("/ring", HTTP_POST, [userEv, passEv]() {
         String body = server.arg("plain");
 
-        if (body.equals(String(userEv->value) + ";" + String(passEv->value))) {
+        if (body.equals(userEv->value + ";" + passEv->value)) {
             isRinging = true;
             ringingStart = millis();
             digitalWrite(RING_PIN, HIGH);
