@@ -7,9 +7,22 @@
 
 #include <Arduino.h>
 #include "ESP8266WebServer.h"
+#include "ESP8266mDNS.h"
 #include "config-html.h"
 #include "LittleFS.h"
 #include "WiFiUdp.h"
+
+#define ENABLE_LOGGING
+
+#ifdef ENABLE_LOGGING
+#define LOG(str) Serial.print(str)
+#define LOGN(str) Serial.println(str)
+#define LOGF(str, p...) Serial.printf(str, p)
+#else
+#define LOG(str)
+#define LOGN(str)
+#define LOGF(str, p...)
+#endif
 
 namespace ESP_CONFIG_PAGE {
 
@@ -23,10 +36,13 @@ namespace ESP_CONFIG_PAGE {
         OTA_END,
         OTA_WRITE_FIRMWARE,
         OTA_WRITE_FILESYSTEM,
-        INFO
+        INFO,
+        WIFI_LIST,
+        WIFI_SET
     };
 
     struct EnvVar {
+        EnvVar(const String key, String value) : key(key), value(value) {};
         const String key;
         String value;
     };
@@ -36,7 +52,7 @@ namespace ESP_CONFIG_PAGE {
         EnvVarStorage() {}
         virtual void saveVars(EnvVar **envVars, uint8_t count);
         virtual uint8_t countVars();
-        virtual void recoverVars(EnvVar *envVars[]);
+        virtual void recoverVars(std::shared_ptr<ESP_CONFIG_PAGE::EnvVar> envVars[]);
     };
 
     struct CustomAction {
@@ -58,6 +74,16 @@ namespace ESP_CONFIG_PAGE {
 
     const char escapeChars[] = {':', ';', '+', '\0'};
     const char escaper = '|';
+
+    String wifiSsid = "";
+    String wifiPass = "";
+    String apSsid = "ESP";
+    String apPass = "12345678";
+    IPAddress apIp = IPAddress(192, 168, 1, 1);
+    String dnsName = "esp-config.local";
+    int lastConnectionError = -1;
+    bool apStarted = false;
+    bool connected = false;
 
     int sizeWithEscaping(const char *str) {
         int len = strlen(str);
@@ -185,6 +211,11 @@ namespace ESP_CONFIG_PAGE {
 
     bool handleLogin(ESP8266WebServer &server, String username, String password);
 
+    void mdnsSetup() {
+        MDNS.begin(dnsName, WiFi.status() == WL_CONNECTED ? WiFi.localIP() : apIp);
+        MDNS.addService("http", "tcp", 80);
+    }
+
     /**
      * @param server
      * @param username
@@ -192,6 +223,7 @@ namespace ESP_CONFIG_PAGE {
      * @param nodeName - DOT NOT USE THE CHARACTERS ":", ";" or "+"
      */
     void setup(ESP8266WebServer &server, String username, String password, String nodeName) {
+        LOGN("Entered config page setup.");
         LittleFS.begin();
 
         customActionsCount = 0;
@@ -237,26 +269,40 @@ namespace ESP_CONFIG_PAGE {
         }, [&server, username, password]() {
             handleRequest(server, username, password, OTA_WRITE_FILESYSTEM);
         });
+
+        server.on(F("/config/wifi"), HTTP_GET, [&server, username, password]() {
+            handleRequest(server, username, password, WIFI_LIST);
+        });
+
+        server.on(F("/config/wifi"), HTTP_POST, [&server, username, password]() {
+            handleRequest(server, username, password, WIFI_SET);
+        });
+
+        server.onNotFound([&server]() {
+            server.send(404, "text/html", F("<html><head><title>Page not found</title></head><body><p>Page not found.</p> <a href=\"/config\">Go to root.</a></body></html>"));
+        });
+
+        LOGN("Config page setup complete.");
     }
 
     void setAndUpdateEnvVarStorage(EnvVarStorage *storage) {
         envVarStorage = storage;
 
         if (envVarStorage != NULL) {
+            LOGN("Env var storage is set, configuring env vars.");
             LittleFS.begin();
 
             uint8_t count = envVarStorage->countVars();
-
+            LOGF("Found %d env vars\n", count);
             if (count > 0) {
-                EnvVar *recovered[count];
+                LOGN("Recoving env vars from storage.");
+                std::shared_ptr<EnvVar> recovered[count];
                 envVarStorage->recoverVars(recovered);
 
                 for (uint8_t i = 0; i < count; i++) {
-                    EnvVar *ev = recovered[i];
-                    if (ev == NULL) {
-                        break;
-                    }
+                    std::shared_ptr<EnvVar> ev = recovered[i];
 
+                    LOGF("Recovered env var with key %s, searching in defined vars.\n", ev->key.c_str());
                     for (uint8_t j = 0; j < envVarCount; j++) {
                         EnvVar *masterEv = envVars[j];
                         if (masterEv == NULL) {
@@ -264,19 +310,21 @@ namespace ESP_CONFIG_PAGE {
                         }
 
                         if (masterEv->key == ev->key) {
+                            LOGF("Setting env var %s to value %s.\n", ev->key.c_str(), ev->value.c_str());
                             masterEv->value = ev->value;
                         }
                     }
-
-                    free(ev);
                 }
             }
         }
     }
 
     void addEnvVar(EnvVar *ev) {
+        LOGF("Adding env var %s.\n", ev->key.c_str());
+
         if (envVarCount + 1 > maxEnvVars) {
             maxEnvVars = maxEnvVars == 0 ? 1 : ceil(maxEnvVars * 1.5);
+            LOGF("Env var array overflow, increasing size to %d.\n", maxEnvVars);
             envVars = (EnvVar**) realloc(envVars, sizeof(EnvVar*) * maxEnvVars);
         }
 
@@ -285,8 +333,10 @@ namespace ESP_CONFIG_PAGE {
     }
 
     void addCustomAction(String key, std::function<void(ESP8266WebServer &server)> handler) {
+        LOGF("Adding action %s.\n", key.c_str());
         if (customActionsCount + 1 > maxCustomActions) {
             maxCustomActions = maxCustomActions == 0 ? 1 : ceil(maxCustomActions * 1.5);
+            LOGF("Actions array overflow, increasing size to %d.\n", maxCustomActions);
             customActions = (CustomAction**) realloc(customActions, sizeof(CustomAction*) * maxCustomActions);
         }
 
@@ -295,13 +345,17 @@ namespace ESP_CONFIG_PAGE {
     }
 
     void ota(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType) {
+        LOGN("OTA upload receiving, starting update process.");
+
         HTTPUpload& upload = server.upload();
         int command = U_FLASH;
         if (reqType == OTA_WRITE_FILESYSTEM) {
+            LOGN("OTA update set to FILESYSTEM mode.");
             command = U_FS;
         }
 
         if (upload.status == UPLOAD_FILE_START) {
+            LOGN("Starting OTA update.");
             WiFiUDP::stopAll();
 
             uint32_t maxSpace = 0;
@@ -311,27 +365,85 @@ namespace ESP_CONFIG_PAGE {
                 maxSpace = FS_end - FS_start;
             }
 
+            LOGF("Calculate max space is %d.\n", maxSpace);
+
             Update.runAsync(true);
             if (!Update.begin(maxSpace, command)) {  // start with max available size
+                LOGN("Error when starting update.");
                 server.send(400, "text/plain", Update.getErrorString());
             }
 
         } else if (upload.status == UPLOAD_FILE_WRITE) {
+            LOGN("Update write.");
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                LOGN("Error when writing update.");
                 server.send(400, "text/plain", Update.getErrorString());
             }
         } else if (upload.status == UPLOAD_FILE_END) {
-            if (Update.end(true)) {  // true to set the size to the current progress
+            LOGN("Update ended.");
+            if (Update.end(true)) {
                 server.send(200);
             } else {
+                LOGN("Error finishing update.");
                 server.send(400, "text/plain", Update.getErrorString());
             }
         }
         yield();
     }
 
+    bool isWiFiReady() {
+        return WiFi.status() == WL_CONNECTED;
+    }
+
+    void tryConnectWifi(bool force) {
+        LOGF("Trying to connect to wifi, force reconnect: %s\n", force ? "yes" : "no");
+        if (!force && WiFi.status() == WL_CONNECTED) {
+            LOGN("Already connected, cancelling reconnection.");
+            return;
+        }
+
+        MDNS.end();
+        WiFi.mode(WIFI_STA);
+        WiFi.setAutoReconnect(true);
+        WiFi.persistent(true);
+
+        if (force) {
+            WiFi.disconnect(false, true);
+            WiFi.begin(wifiSsid, wifiPass);
+        } else {
+            WiFi.begin();
+        }
+
+        LOGN("Connecting now...");
+        int result = WiFi.waitForConnectResult(60000);
+        LOGF("Connection result: %d\n", result);
+
+        if (result == WL_CONNECTED) {
+            LOGF("Connected successfully, starting dns server with name %s.\n", dnsName.c_str());
+            delay(200);
+            mdnsSetup();
+        } else {
+            LOGN("Connection error.");
+            lastConnectionError = result;
+        }
+    }
+
+    void setWiFiCredentials(String &ssid, String &pass) {
+        wifiSsid = ssid;
+        wifiPass = pass;
+    }
+
+    void setAPConfig(const char ssid[], const char pass[]) {
+        apSsid = ssid;
+        apPass = pass;
+        WiFi.softAPConfig(apIp, apIp, IPAddress(255, 255, 255, 0));
+    }
+
     inline void handleRequest(ESP8266WebServer &server, String username, String password, REQUEST_TYPE reqType) {
+        LOGF("Received request of type %d.\n", reqType);
+
         if (!server.authenticate(username.c_str(), password.c_str())) {
+            LOGN("Authentication failure.");
             delay(1500);
             server.requestAuthentication();
             return;
@@ -339,7 +451,8 @@ namespace ESP_CONFIG_PAGE {
 
         switch (reqType) {
             case CONFIG_PAGE:
-                server.send(200, F("text/html"), ESP_CONFIG_HTML);
+                server.sendHeader("Content-Encoding", "gzip");
+                server.send_P(200, "text/html", (const char*) ESP_CONFIG_HTML, ESP_CONFIG_HTML_LEN);
                 break;
             case FILES: {
                 String path = server.arg("plain");
@@ -530,12 +643,111 @@ namespace ESP_CONFIG_PAGE {
                     strcat(buf, bufKey);
                     strcat(buf, ";");
                 }
+
+                strcat(buf, "+");
+                strcat(buf, WiFi.status() == WL_DISCONNECTED || WiFi.getMode() == WIFI_AP ? "0" : "1");
                 strcat(buf, "+");
 
                 server.send(200, "text/plain", buf);
                 break;
             }
+            case WIFI_LIST: {
+                int count = WiFi.scanNetworks();
+                String ssid = WiFi.SSID();
+                int bufSize = ssid.length() + 8;
+                int wifiStatus = WiFi.status();
+
+                char ssids[count][33];
+                if (wifiStatus != WL_IDLE_STATUS || lastConnectionError != -1) {
+                    for (int i = 0; i < count; i++) {
+                        const bss_info *it = WiFi.getScanInfoByIndex(i);
+
+                        if(!it) {
+                            ssids[i][0] = '\0';
+                            continue;
+                        }
+
+                        memcpy(ssids[i], it->ssid, sizeof(it->ssid));
+                        ssids[count][32] = '\0';
+                        bufSize += strlen(ssids[count]) + 10;
+                    }
+                }
+
+                char buf[bufSize];
+                buf[0] = '\0';
+
+                if (wifiStatus != WL_IDLE_STATUS || lastConnectionError != -1) {
+                    for (int i = 0; i < count; i++) {
+                        char escapebuf[strlen(ssids[i])];
+                        escape(escapebuf, ssids[i]);
+
+                        uint32_t rssi = WiFi.RSSI(i);
+                        int rssiLength = snprintf(NULL, 0, "%d", rssi);
+                        char rssibuf[rssiLength+1];
+                        sprintf(rssibuf, "%d", rssi);
+
+                        strcat(buf, escapebuf);
+                        strcat(buf, ":");
+                        strcat(buf, rssibuf);
+                        strcat(buf, ":;");
+                    }
+                }
+
+                strcat(buf, "+");
+                strcat(buf, ssid.c_str());
+                strcat(buf, "+");
+                strcat(buf, String(lastConnectionError != -1 ? lastConnectionError : wifiStatus).c_str());
+                strcat(buf, "+");
+
+                server.send(200, "text/plain", buf);
+                break;
+            }
+            case WIFI_SET: {
+                String body = server.arg("plain");
+
+                uint8_t size = countChar(body.c_str(), ':');
+                std::shared_ptr<char[]> ssidAndPass[size];
+                getValueSplit(body.c_str(), ':', ssidAndPass);
+
+                if (size < 2) {
+                    server.send(400, "text/plain", "Invalid request.");
+                    return;
+                }
+
+                char ssidUnescaped[strlen(ssidAndPass[0].get())];
+                char passUnescaped[strlen(ssidAndPass[1].get())];
+
+                unescape(ssidUnescaped, ssidAndPass[0].get());
+                unescape(passUnescaped, ssidAndPass[1].get());
+
+                server.send(200);
+                wifiSsid = String(ssidUnescaped);
+                wifiPass = String(passUnescaped);
+                tryConnectWifi(true);
+                break;
+            }
         }
+    }
+
+    void loop() {
+        MDNS.update();
+        int status = WiFi.status();
+
+         if (!apStarted && lastConnectionError != -1) {
+             LOGF("Connection error %d, starting AP.\n", lastConnectionError);
+             WiFi.softAP(apSsid, apPass);
+             mdnsSetup();
+             LOGF("Server IP is %s.\n", apIp.toString().c_str());
+             apStarted = true;
+             connected = false;
+        }
+
+         if (!connected && status == WL_CONNECTED) {
+             LOGF("Connected successfully to wireless network, IP: %s.\n", WiFi.localIP().toString().c_str());
+             lastConnectionError = -1;
+             apStarted = false;
+             connected = true;
+         }
     }
 
     class LittleFSEnvVarStorage : public EnvVarStorage {
@@ -582,7 +794,7 @@ namespace ESP_CONFIG_PAGE {
             return ESP_CONFIG_PAGE::countChar(content.c_str(), ';');
         }
 
-        void recoverVars(ESP_CONFIG_PAGE::EnvVar *recovered[]) override {
+        void recoverVars(std::shared_ptr<ESP_CONFIG_PAGE::EnvVar> recovered[]) override {
             if (!LittleFS.exists(filePath)) {
                 return;
             }
@@ -610,7 +822,7 @@ namespace ESP_CONFIG_PAGE {
                 unescape(key, varStr[0].get());
                 unescape(val, varStr[1].get());
 
-                recovered[i] = new EnvVar{String(key), String(val)};
+                recovered[i] = std::make_shared<ESP_CONFIG_PAGE::EnvVar>(String(key), String(val));
             }
 
             file.close();

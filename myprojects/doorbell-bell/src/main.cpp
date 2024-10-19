@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include "WiFiManager.h"
 #include "esp-config-page.h"
 
 #define AP_NAME "ESP-DOORBELL-BELL"
@@ -8,7 +7,6 @@
 #define RING_PIN 2
 #define RING_MILLIS 1500
 
-WiFiManager manager;
 ESP8266WebServer server(80);
 bool isRinging = false;
 unsigned long ringingStart = 0;
@@ -16,7 +14,7 @@ unsigned long ringingStart = 0;
 void(* resetFunc) (void) = 0;
 
 void IRAM_ATTR resetConfig() {
-    manager.resetSettings();
+    WiFi.disconnect(false, true);
     ESP.eraseConfig();
 
     delay(200);
@@ -30,7 +28,9 @@ void setup(void) {
     digitalWrite(RING_PIN, LOW);
 
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
-    manager.autoConnect(AP_NAME, AP_PASSWORD);
+    ESP_CONFIG_PAGE::setAPConfig(AP_NAME, AP_PASSWORD);
+    ESP_CONFIG_PAGE::dnsName = "esp-doorbell-bell.local";
+    ESP_CONFIG_PAGE::tryConnectWifi(false);
 
     auto *userEv = new ESP_CONFIG_PAGE::EnvVar{"BELL_USER", ""};
     auto *passEv = new ESP_CONFIG_PAGE::EnvVar{"BELL_PASSWORD", ""};
@@ -71,6 +71,7 @@ void setup(void) {
 
 void loop(void) {
     server.handleClient();
+    ESP_CONFIG_PAGE::loop();
 
     if (isRinging && millis() - ringingStart > RING_MILLIS) {
         isRinging = false;
