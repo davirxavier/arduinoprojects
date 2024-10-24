@@ -7,7 +7,6 @@
 
 #include <Arduino.h>
 #include "ESP8266WebServer.h"
-#include "ESP8266mDNS.h"
 #include "config-html.h"
 #include "LittleFS.h"
 #include "WiFiUdp.h"
@@ -211,11 +210,6 @@ namespace ESP_CONFIG_PAGE {
 
     bool handleLogin(ESP8266WebServer &server, String username, String password);
 
-    void mdnsSetup() {
-        MDNS.begin(dnsName, WiFi.status() == WL_CONNECTED ? WiFi.localIP() : apIp);
-        MDNS.addService("http", "tcp", 80);
-    }
-
     /**
      * @param server
      * @param username
@@ -402,7 +396,6 @@ namespace ESP_CONFIG_PAGE {
             return;
         }
 
-        MDNS.end();
         WiFi.mode(WIFI_STA);
         WiFi.setAutoReconnect(true);
         WiFi.persistent(true);
@@ -421,7 +414,6 @@ namespace ESP_CONFIG_PAGE {
         if (result == WL_CONNECTED) {
             LOGF("Connected successfully, starting dns server with name %s.\n", dnsName.c_str());
             delay(200);
-            mdnsSetup();
         } else {
             LOGN("Connection error.");
             lastConnectionError = result;
@@ -730,13 +722,11 @@ namespace ESP_CONFIG_PAGE {
     }
 
     void loop() {
-        MDNS.update();
         int status = WiFi.status();
 
          if (!apStarted && lastConnectionError != -1) {
              LOGF("Connection error %d, starting AP.\n", lastConnectionError);
              WiFi.softAP(apSsid, apPass);
-             mdnsSetup();
              LOGF("Server IP is %s.\n", apIp.toString().c_str());
              apStarted = true;
              connected = false;
