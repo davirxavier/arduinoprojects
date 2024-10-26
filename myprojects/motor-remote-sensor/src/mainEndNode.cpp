@@ -75,7 +75,15 @@ void readTempSensor() {
     LOGF("Read temp sensor, temp is %d", currentTemp);
 }
 
+bool isOverMaxTemp() {
+    return currentTemp > maxTemp;
+}
+
 void turn(bool on) {
+    if (!isRelayOn && on && isOverMaxTemp()) {
+        return;
+    }
+
     isRelayOn = on;
     writeEeprom();
     digitalWrite(RELAY_PIN, isRelayOn ? HIGH : LOW);
@@ -84,9 +92,17 @@ void turn(bool on) {
 void sendHealthPing() {
     LOGN("Sending health ping.");
 
-    const uint8_t buf[] = {currentTemp, currentTemp > maxTemp, isRelayOn};
+    const uint8_t buf[] = {currentTemp, isOverMaxTemp(), isRelayOn};
     sendCommand(MotorCommand::HEALTH_PING, buf, 3);
     lastPingSent = millis();
+}
+
+void sendAck(MotorCommand::MotorCommands command, CommandResponses::CommandResponses response) {
+    uint8_t extras[3];
+    extras[0] = command;
+    extras[1] = response;
+    extras[2] = isRelayOn;
+    sendCommand(MotorCommand::ACK, extras, 3);
 }
 
 void setup() {
@@ -115,8 +131,20 @@ void setup() {
             return;
         }
 
-        dataRecvCb = [](uint8_t command, uint8_t extra, uint8_t *mac) {
+        dataRecvCb = [](uint8_t c, uint8_t *extra, uint8_t extrasLength, uint8_t *mac) {
+            auto command = static_cast<MotorCommand::MotorCommands>(c);
 
+            if (command == MotorCommand::TURN_ON && isOverMaxTemp()) {
+                sendAck(command, CommandResponses::TOO_HOT);
+            } else if (command == MotorCommand::TURN_ON && !isOverMaxTemp()) {
+                turn(true);
+                sendAck(command, CommandResponses::OK);
+            } else if (command == MotorCommand::TURN_OFF) {
+                turn(false);
+                sendAck(command, CommandResponses::OK);
+            } else if (command == MotorCommand::HEALTH_PING) {
+                sendHealthPing();
+            }
         };
     }
 
@@ -134,7 +162,7 @@ void loop() {
         lastTempCheck = millis();
     }
 
-    if (currentTemp > maxTemp) {
+    if (isRelayOn && isOverMaxTemp()) {
         LOGN("Temp limit reached! Turning motor off.");
         turn(false);
         sendHealthPing();

@@ -19,6 +19,13 @@ namespace MotorCommand {
     };
 }
 
+namespace CommandResponses {
+    enum CommandResponses{
+        OK = 200,
+        TOO_HOT = 87,
+    };
+};
+
 ESP8266WebServer server(80);
 auto usernameEnvVar = new ESP_CONFIG_PAGE::EnvVar("USERNAME", "");
 auto passwordEnvVar = new ESP_CONFIG_PAGE::EnvVar("PASSWORD", "");
@@ -27,7 +34,7 @@ auto pmkVar = new ESP_CONFIG_PAGE::EnvVar("ENC_PMK", "");
 auto lmkVar = new ESP_CONFIG_PAGE::EnvVar("ENC_LMK", "");
 uint8_t peerMacAddr[6];
 std::function<void(uint8_t *mac, uint8_t status)> dataSentCb;
-std::function<void(uint8_t command, uint8_t extra, uint8_t *mac)> dataRecvCb;
+std::function<void(uint8_t command, uint8_t *extraInfo, uint8_t extraInfoLength, uint8_t *mac)> dataRecvCb;
 
 bool parseMacAddr(char str[18], uint8_t resultAddr[6]) {
     unsigned int bytes[6];
@@ -154,10 +161,8 @@ bool initConfigPage(bool isMaster) {
             }
 
             uint8_t command = data[0];
-            uint8_t extra = data[1];
-
-            LOGF("Command received is %d, extra info is %d.", command, extra);
-            dataRecvCb(command, extra, mac_addr);
+            LOGF("Command received is %d.", command);
+            dataRecvCb(command, data+1, len-1, mac_addr);
         });
     }
 
@@ -177,6 +182,10 @@ uint8_t sendCommand(MotorCommand::MotorCommands c, const uint8_t extraInfo[], ui
 
 uint8_t sendCommand(MotorCommand::MotorCommands c) {
     return sendCommand(c, NULL, 0);
+}
+
+uint8_t requestUpdate() {
+    return sendCommand(MotorCommand::HEALTH_PING);
 }
 
 #endif //MOTOR_REMOTE_SENSOR_SHARED_H
