@@ -1,26 +1,26 @@
-#include "Arduino.h"
+#include <Arduino.h>
+#include "Wire.h"
 #include "LiquidCrystal_I2C.h"
-#include "EEPROMex.h"
-#include "max6675.h"
 #include "IRremote.h"
+#include "max6675.h"
+#include "EEPROM.h"
 
-#define LCD_ADDR 0x27
-#define LCD_COLS 16
-#define LCD_LINES 2
-
-#define FAN_CONTROL_PIN 4
-#define FAN_SPEED_PIN 9
-#define FAN_INTERVAL 20
-#define LED_CONTROL_PIN 5
-#define LED_INTERVAL 20
-
-#define TEMPERATURE_PIN 8
+#define LCD_ADDRESS 0x27
+#define IR_PIN 1
+#define HEAT_PIN 2
+#define HEAT_ON_VAL LOW
+#define HEAT_OFF_VAL HIGH
+#define SENSOR_CLK 1
+#define SENSOR_CS 2
+#define SENSOR_MISO 3
+#define COMMAND_TIMEOUT 500
+#define MAX_FAN_SPEED 5
+#define MIN_FAN_SPEED 0
+#define TEMP_THRESHOLD 15
+#define TEMP_HEAT_TIMEOUT 20000
 #define MAX_TEMP 500
-#define HEATING_ON_VAL HIGH
-#define HEATING_OFF_VAL LOW
-#define SENSOR_CLK 10
-#define SENSOR_CS 11
-#define SENSOR_SO 12
+#define EEPROM_ADDR 32
+#define EEPROM_MARKER 58
 
 /*
  * 69 - power
@@ -47,342 +47,200 @@
 #define CMD_POWER 69
 #define FAN_PLUS 25
 #define FAN_MINUS 22
-#define LED_PLUS 9
-#define LED_MINUS 13
 #define TEMP_PLUS 21
 #define TEMP_MINUS 7
-#define CMD_STOP 71
 #define CMD_SAVE 67
 #define CMD_RECOVER 64
-#define IR_SENSOR_PIN A0
-#define CMD_DISABLE_HEATING 68
-
-uint8_t numbersIr[] = {12, 24, 94, 8, 28, 90, 66, 82, 74};
-
-#define SWITCH_TIMEOUT_SECONDS 10
+#define CMD_MODE 68
+uint8_t numCommands[] = {13, 12, 24, 94, 8, 28, 90, 66, 82, 74};
 
 struct Config {
-    uint8_t speed : 3;
-    uint8_t led : 3;
-    uint16_t temperature : 9;
+    uint16_t userTemp;
+    uint8_t fanSpeed;
+
+    Config() {
+        userTemp = 300;
+        fanSpeed = 3;
+    }
 };
 
-//configure Timer 1 (pins 9,10) to output 25kHz PWM
-void setupTimer9and10(){
-    //Set PWM frequency to about 25khz on pins 9,10 (timer 1 mode 10, no prescale, count to 320)
-    TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
-    TCCR1B = (1 << CS10) | (1 << WGM13);
-    ICR1 = 320;
-    OCR1A = 0;
-    OCR1B = 0;
+namespace States {
+    enum States {
+        ON,
+        USER_TEMP,
+        TEMP,
+        FAN,
+        NO_HEATING,
+        SAVE_MODE,
+        RECOVER_MODE
+    };
 }
 
-//equivalent of analogWrite on pin 9
-void setPWM9(float f){
-    f=f<0?0:f>1?1:f;
-    OCR1A = (uint16_t)(320*f);
+MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_MISO);
+LiquidCrystal_I2C display(LCD_ADDRESS, 16, 2);
+char displayBuffer[33];
+Config *currentConfig;
+Config savedConfigs[10];
+uint16_t currentTemp = 30;
+
+bool isOn = false;
+bool isHeating = false;
+bool forceHeatingOff = false;
+bool isSaveMode = false;
+bool isRecoverMode = false;
+unsigned long commandTimer = 0;
+unsigned long heatTimer = 0;
+unsigned long tempUpdateTimer = 0;
+
+void recoverConfigs() {
+    if (EEPROM.read(EEPROM_ADDR) != EEPROM_MARKER) {
+        EEPROM.put(EEPROM_ADDR, (uint8_t) EEPROM_MARKER);
+    } else {
+        EEPROM.get(EEPROM_ADDR+1, savedConfigs);
+    }
+    currentConfig = &savedConfigs[0];
 }
 
-int ledPercent;
-int lastLedPercent;
-int speedPercent;
-int lastSpeedPercent;
-String inString;
-char toPrint[17];
+/*
+ * T: 000ºC|000ºC H
+ * F: x | V: xx.xx
+ */
+void updateDisplay() {
+    if (isSaveMode) {
+        display.clear();
+        display.print("Salvar conf.\npressione numero");
+        return;
+    }
 
-unsigned int userTemp = 300;
-double realTemp = 150;
+    if (isRecoverMode) {
+        display.clear();
+        display.print("Recuperar conf.\npressione numero");
+        return;
+    }
 
-unsigned long lastUpdateDisplay = 0;
-unsigned long lastSwitched = 0;
+    sprintf(displayBuffer, "T: %03d\223C|%03d\223C %c\nF: %01d",
+            forceHeatingOff ? 0 : currentConfig.userTemp,
+            currentTemp,
+            forceHeatingOff ? 'N' : (isHeating ? 'H' : ' '),
+            currentConfig.fanSpeed > 9 ? 9 : currentConfig.fanSpeed);
 
-bool isRecovering = false;
-bool isSaving = false;
-bool disableHeating = false;
-bool isHeatingOn = false;
-bool isAllOn = false;
-bool firstTempUpdateDone = false;
-bool initialHeatUpComplete = false;
-MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_SO);
+    display.clear();
+    display.print(displayBuffer);
+}
 
-LiquidCrystal_I2C display(LCD_ADDR, LCD_COLS, LCD_LINES);
+void updateStates(States::States s, unsigned int extra) {
+    if(s == States::ON) {
+        isOn = !isOn;
+        isHeating = false;
 
-IRrecv remote(IR_SENSOR_PIN);
-bool remoteResumed = true;
-unsigned long remoteTimeout = 0;
+        if (isOn) {
+            display.display();
+            display.backlight();
+        } else {
+            display.noDisplay();
+            display.noBacklight();
+        }
+    } else if (s == States::NO_HEATING) {
+        forceHeatingOff = true;
+        isHeating = false;
+    } else if (s == States::SAVE_MODE) {
+        isSaveMode = true;
+        isRecoverMode = false;
+    } else if (s == States::RECOVER_MODE) {
+        isSaveMode = false;
+        isRecoverMode = true;
+    } else if (s == States::FAN) { // TODO
+    } else if (s == States::USER_TEMP) {
+        currentConfig.userTemp = extra > MAX_TEMP ? MAX_TEMP : extra;
+    } else if (s == States::TEMP && millis() - heatTimer > TEMP_HEAT_TIMEOUT) {
+        currentTemp = extra > 999 ? 999 : extra;
 
-void updateDisplay();
-void processCommands();
-void processTemp();
-double readTemp();
-void changeLed(bool increase);
-void changeFanSpeed(bool increase);
-int getFanSpeed();
-void turnOnOff();
-void saveConfiguration(uint8_t slot);
-void restoreConfiguration(uint8_t slot);
+        if (currentTemp + TEMP_THRESHOLD >= currentConfig.userTemp) {
+            isHeating = false;
+            digitalWrite(HEAT_PIN, HEAT_OFF_VAL);
+            heatTimer = millis();
+        } else {
+            isHeating = true;
+            digitalWrite(HEAT_PIN, HEAT_ON_VAL);
+            heatTimer = millis();
+        }
+    } else {
+        return;
+    }
+
+    updateDisplay();
+}
+
+void processIrCommand() {
+    IrReceiver.decode();
+    IrReceiver.resume();
+
+    if (millis() - commandTimer < COMMAND_TIMEOUT) {
+        return;
+    }
+
+    auto command = IrReceiver.decodedIRData.command;
+
+    if (isSaveMode || isRecoverMode) {
+        for (const uint8_t num : numCommands) {
+
+        }
+        return;
+    }
+
+    switch (command) {
+        case CMD_POWER: {
+            updateStates(States::ON, 0);
+            break;
+        }
+        case TEMP_PLUS: {
+            updateStates(States::USER_TEMP, currentConfig.userTemp+10);
+            break;
+        }
+        case TEMP_MINUS: {
+            updateStates(States::USER_TEMP, currentConfig.userTemp-10);
+            break;
+        }
+        case FAN_PLUS: {
+            updateStates(States::FAN, currentConfig.fanSpeed+1);
+            break;
+        }
+        case FAN_MINUS: {
+            updateStates(States::FAN, currentConfig.fanSpeed-1);
+            break;
+        }
+        case CMD_SAVE: {
+            updateStates(States::SAVE_MODE, 0);
+            break;
+        }
+        case CMD_RECOVER: {
+            updateStates(States::RECOVER_MODE, 0);
+            break;
+        }
+        case CMD_MODE: {
+            updateStates(States::SAVE_MODE, 0);
+            break;
+        }
+    }
+}
 
 void setup() {
-    pinMode(10, OUTPUT);
+    pinMode(HEAT_PIN, OUTPUT);
 
-    pinMode(FAN_CONTROL_PIN, OUTPUT);
-    pinMode(FAN_SPEED_PIN, OUTPUT);
-    pinMode(LED_CONTROL_PIN, OUTPUT);
-    pinMode(TEMPERATURE_PIN, OUTPUT);
+    IrReceiver.begin(IR_PIN);
+    IrReceiver.registerReceiveCompleteCallback(processIrCommand);
 
-    setupTimer9and10();
-
-    ledPercent = 0;
-    lastLedPercent = -1;
-    speedPercent = 0;
-    lastSpeedPercent = -1;
-
-    display.begin(LCD_COLS, LCD_LINES);
-    display.clear();
-    display.setBacklight(8);
-
-    isAllOn = true;
-    turnOnOff();
-
-    remote.enableIRIn();
-
-    Serial.begin(9600);
+    display.init();
+    display.backlight();
+    display.print("T: 000\223C|000\223C H\nF: x");
 }
 
 void loop() {
-    processCommands();
-
-    if (isAllOn) {
-        if (speedPercent != lastSpeedPercent && speedPercent <= 0) {
-            digitalWrite(FAN_CONTROL_PIN, LOW);
-            setPWM9(0);
-        } else if (speedPercent != lastSpeedPercent) {
-            digitalWrite(FAN_CONTROL_PIN, HIGH);
-            setPWM9(speedPercent/100.0f);
-        }
-
-        if (ledPercent != lastLedPercent) {
-            analogWrite(LED_CONTROL_PIN, map(ledPercent, 0, 100, 0, 255));
-        }
-
-        if (millis() - lastUpdateDisplay > 1000) {
-            realTemp = readTemp();
-            processTemp();
-            updateDisplay();
-            lastUpdateDisplay = millis();
+    if (millis() - tempUpdateTimer > 2000) {
+        auto temp = (uint16_t) tempSensor.readCelsius();
+        if (temp != currentTemp) {
+            currentTemp = temp;
+            updateStates(States::TEMP, currentTemp);
         }
     }
-
-    lastSpeedPercent = speedPercent;
-    lastLedPercent = ledPercent;
-}
-
-void turnOnOff() {
-    isAllOn = !isAllOn;
-
-    if (isAllOn) {
-        display.display();
-        display.backlight();
-
-        lastSpeedPercent = -1;
-        lastLedPercent = -1;
-        updateDisplay();
-
-        if (isHeatingOn) {
-            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
-        }
-    } else {
-        display.noDisplay();
-        display.noBacklight();
-
-        analogWrite(LED_CONTROL_PIN, 0);
-        digitalWrite(FAN_CONTROL_PIN, LOW);
-        setPWM9(0);
-        digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
-    }
-}
-
-void updateDisplay() {
-    if (!isSaving && !isRecovering) {
-        snprintf(toPrint, sizeof(toPrint),
-                 (String("T: %s") + (char)223 + String("C/%i") + (char)223 + "C     ").c_str(),
-                 disableHeating ? "OFF" : String(userTemp).c_str(),
-                 lround(realTemp));
-        display.setCursor(0, 0);
-        display.printstr(toPrint);
-
-        snprintf(toPrint, sizeof(toPrint), "V: %i | LED: %i%%     ", getFanSpeed(), ledPercent);
-        display.setCursor(0, 1);
-        display.printstr(toPrint);
-    }
-}
-
-void processCommands() {
-    if (!remoteResumed && millis()-remoteTimeout > 650) {
-        remote.resume();
-        remoteResumed = true;
-    }
-
-    if (remoteResumed && remote.decode()) {
-        uint16_t command = remote.decodedIRData.command;
-
-        if (isAllOn) {
-            switch (command) {
-                case CMD_POWER:
-                    turnOnOff();
-                    break;
-                case TEMP_PLUS:
-                    userTemp++;
-                    break;
-                case TEMP_MINUS:
-                    userTemp--;
-                    break;
-                case FAN_PLUS:
-                    changeFanSpeed(true);
-                    break;
-                case FAN_MINUS:
-                    changeFanSpeed(false);
-                    break;
-                case LED_PLUS:
-                    changeLed(true);
-                    break;
-                case LED_MINUS:
-                    changeLed(false);
-                    break;
-                case CMD_RECOVER:
-                    isRecovering = true;
-                    isSaving = false;
-
-                    display.clear();
-                    display.setCursor(0, 0);
-                    display.printstr("Pressione 1 a 9");
-                    display.setCursor(0, 1);
-                    display.printstr("para recuperar");
-                    break;
-                case CMD_SAVE:
-                    isSaving = true;
-                    isRecovering = false;
-
-                    display.clear();
-                    display.setCursor(0, 0);
-                    display.printstr("Pressione 1 a 9");
-                    display.setCursor(0, 1);
-                    display.printstr("para salvar");
-                    break;
-                case CMD_STOP:
-                    isRecovering = false;
-                    isSaving = false;
-                    break;
-                case CMD_DISABLE_HEATING:
-                    disableHeating = !disableHeating;
-                    break;
-                default:
-                    if (isSaving || isRecovering) {
-                        for (uint8_t i = 0; i < sizeof(numbersIr); i++) {
-                            if (numbersIr[i] == command) {
-                                if (isSaving) {
-                                    saveConfiguration(i+1);
-                                } else if (isRecovering) {
-                                    restoreConfiguration(i+1);
-                                }
-                                isSaving = false;
-                                isRecovering = false;
-                                updateDisplay();
-                                break;
-                            }
-                        }
-                    }
-            }
-
-            if (command != CMD_POWER) {
-                updateDisplay();
-            }
-
-            if (command == TEMP_PLUS || command == TEMP_MINUS) {
-                remote.resume();
-            } else {
-                remoteResumed = false;
-                remoteTimeout = millis();
-            }
-        } else if (command == CMD_POWER) {
-            turnOnOff();
-            remote.resume();
-        }
-    }
-}
-
-void processTemp() {
-    if (isAllOn) {
-        if (disableHeating) {
-            digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
-            return;
-        }
-
-        if (!isHeatingOn && (realTemp < 50 || (!firstTempUpdateDone && realTemp < userTemp))) {
-            initialHeatUpComplete = false;
-            isHeatingOn = true;
-            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
-        }
-
-        if (isHeatingOn && realTemp >= (userTemp-13) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000)*4)) {
-            initialHeatUpComplete = true;
-            isHeatingOn = false;
-            digitalWrite(TEMPERATURE_PIN, HEATING_OFF_VAL);
-            lastSwitched = millis();
-        }
-
-        if (initialHeatUpComplete && !isHeatingOn && realTemp < (userTemp-5) && millis()-lastSwitched > (SWITCH_TIMEOUT_SECONDS*((unsigned int) 1000))) {
-            isHeatingOn = true;
-            digitalWrite(TEMPERATURE_PIN, HEATING_ON_VAL);
-            lastSwitched = millis();
-        }
-
-        firstTempUpdateDone = true;
-    }
-}
-
-double readTemp() {
-    float reading = tempSensor.readCelsius();
-    return reading + (reading > 50 ? map(reading, 50, MAX_TEMP, 0, 12) : 0);
-}
-
-void changeLed(bool increase) {
-    ledPercent = increase ? ledPercent+LED_INTERVAL : ledPercent-LED_INTERVAL;
-    ledPercent = ledPercent < 0 ? 0 : (ledPercent > 100 ? 100 : ledPercent);
-}
-
-void changeFanSpeed(bool increase) {
-    speedPercent = increase ? speedPercent+FAN_INTERVAL : speedPercent-FAN_INTERVAL;
-    speedPercent = speedPercent < 0 ? 0 : (speedPercent > 100 ? 100 : speedPercent);
-}
-
-int getFanSpeed() {
-    return ceil(speedPercent/FAN_INTERVAL);
-}
-
-int getLedValue() {
-    return ceil(ledPercent/LED_INTERVAL);
-}
-
-void saveConfiguration(uint8_t slot) {
-    Config cfg{};
-    cfg.speed = getFanSpeed();
-    cfg.led = getLedValue();
-    cfg.temperature = userTemp;
-
-    int address = slot*sizeof(Config);
-    EEPROM.updateBlock(address, cfg);
-}
-
-void restoreConfiguration(uint8_t slot) {
-    int address = slot*sizeof(Config);
-
-    Config cfg{};
-    EEPROM.readBlock(address, cfg);
-
-    speedPercent = cfg.speed*FAN_INTERVAL;
-    speedPercent = speedPercent >= 100 ? 100 : (speedPercent <= 0 ? 0 : speedPercent);
-    ledPercent = cfg.led*LED_INTERVAL;
-    ledPercent = ledPercent >= 100 ? 100 : (ledPercent <= 0 ? 0 : ledPercent);
-    userTemp = cfg.temperature > MAX_TEMP ? MAX_TEMP : cfg.temperature;
 }
