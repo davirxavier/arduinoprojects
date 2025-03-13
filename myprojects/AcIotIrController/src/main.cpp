@@ -2,35 +2,21 @@
 #define FIRMWARE_VERSION "1.1.2"
 
 #include <Arduino.h>
-#include "LittleFS.h"
-#include "WiFiManager.h"
 #include "ArduinoJson.h"
-#include "logger.h"
+#include "LittleFS.h"
 #include "TZ.h"
 #include "Capabilities/TemperatureSensor.h"
 #include "weather-utils.h"
 #include "ir_Samsung.h"
 #include "SinricPro.h"
 #include "SinricProWindowAC.h"
-#include "ESP8266OTAHelper.h"
-#include "SemVer.h"
+#include "esp-config-page.h"
+#include "esp-config-page-logging.h"
 
 #define AP_NAME "ESP-AC-CONTROL-1"
 #define AP_PASSWORD "admin13246"
-#define APP_KEY_SIZE 37
-#define APP_SECRET_SIZE 74
-#define DEVICE_ID_SIZE 25
-#define OPENWEATHER_API_KEY_SIZE 33
-#define LAT_SIZE 21
-#define LON_SIZE 21
 #define DATA_FILE "data"
 #define TEMP_UPDATE_INTERVAL 600000
-
-#define ENABLE_SERIAL_LOGGING
-#define SERIAL_LOG_LN(str) dxlogger::log(str, true)
-#define SERIAL_LOG(str) dxlogger::log(str, false)
-
-bool shouldSaveCredentials;
 
 class SinricACWithTemp : public SinricProWindowAC, public TemperatureSensor<SinricACWithTemp> {
     friend class TemperatureSensor<SinricACWithTemp>;
@@ -39,12 +25,6 @@ public:
 };
 
 struct AcData {
-    char weatherApiKey[OPENWEATHER_API_KEY_SIZE];
-    char lat[LAT_SIZE];
-    char lon[LON_SIZE];
-    char appKey[APP_KEY_SIZE];
-    char appSecret[APP_SECRET_SIZE];
-    char deviceId[DEVICE_ID_SIZE];
     uint8_t targetTemp;
     uint8_t roomTemp;
     uint8_t fanSpeed;
@@ -57,102 +37,32 @@ struct AcData {
 
 dxweather::WeatherInfo weatherInfo{};
 AcData data{};
-WiFiManager manager;
 unsigned long lastTempEvent;
 SinricACWithTemp *ac;
 HTTPClient http;
 WiFiClientSecure client;
 IRSamsungAc acIr(4);
 bool firstUpdate = false;
+bool sinricInit = false;
 
-void saveData() {
-    File file = LittleFS.open(DATA_FILE, "w");
-    if (!file) {
-        SERIAL_LOG_LN(F("Failed to create file"));
-        return;
-    }
+ESP_CONFIG_PAGE::WEBSERVER_T server(80);
+auto adminUsername = new ESP_CONFIG_PAGE::EnvVar("ADMIN_USER");
+auto adminPassword = new ESP_CONFIG_PAGE::EnvVar("ADMIN_PASS");
+auto weatherApiKey = new ESP_CONFIG_PAGE::EnvVar("WEATHER_API_KEY");
+auto lat = new ESP_CONFIG_PAGE::EnvVar("WEATHER_LAT");
+auto lon = new ESP_CONFIG_PAGE::EnvVar("WEATHER_LON");
+auto appKey = new ESP_CONFIG_PAGE::EnvVar("SINRIC_APP_KEY");
+auto appSecret = new ESP_CONFIG_PAGE::EnvVar("SINRIC_APP_SECRET");
+auto deviceId = new ESP_CONFIG_PAGE::EnvVar("SINRIC_DEVICE_ID");
 
-    JsonDocument doc;
-    doc["weatherApiKey"] = data.weatherApiKey;
-    doc["lat"] = data.lat;
-    doc["lon"] = data.lon;
-    doc["appKey"] = data.appKey;
-    doc["appSecret"] = data.appSecret;
-    doc["deviceId"] = data.deviceId;
-    doc["targetTemp"] = data.targetTemp;
-    doc["level"] = data.fanSpeed;
-    doc["degreesSub"] = data.degreesSubtract;
-    doc["roomTemp"] = data.roomTemp;
-    doc["mode"] = data.isAutoMode;
-    doc["isOn"] = data.isOn;
-    doc["swing"] = data.swing;
-    doc["isEco"] = data.isEco;
-
-    if (serializeJson(doc, file) == 0) {
-        SERIAL_LOG_LN(F("Failed to write to file"));
-    }
-
-    file.close();
-}
-
-void recoverData() {
-    if (!LittleFS.exists(DATA_FILE)) {
-        SERIAL_LOG_LN("Credentials file does not exist.");
-        return;
-    }
-
-    File file = LittleFS.open(DATA_FILE, "r");
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, file);
-    if (error)
-        SERIAL_LOG_LN(F("Failed to read file, using default configuration"));
-
-    strlcpy(data.weatherApiKey,
-            doc["weatherApiKey"] | "",
-            sizeof(data.weatherApiKey));
-    strlcpy(data.lat,
-            doc["lat"] | "",
-            sizeof(data.lat));
-    strlcpy(data.lon,
-            doc["lon"] | "",
-            sizeof(data.lon));
-    strlcpy(data.appKey,
-            doc["appKey"] | "",
-            sizeof(data.appKey));
-    strlcpy(data.appSecret,
-            doc["appSecret"] | "",
-            sizeof(data.appSecret));
-    strlcpy(data.deviceId,
-            doc["deviceId"] | "",
-            sizeof(data.deviceId));
-
-    data.targetTemp = doc["targetTemp"];
-    data.fanSpeed = doc["level"];
-    data.roomTemp = doc["roomTemp"];
-    data.isAutoMode = doc["mode"];
-    data.isOn = doc["isOn"];
-
-    // Needs to do this for every value added after first release
-    if (doc.containsKey("degreesSub")) {
-        data.degreesSubtract = doc["degreesSub"];
-    }
-
-    if (doc.containsKey("swing")) {
-        data.swing = doc["swing"];
-    }
-
-    if (doc.containsKey("isEco")) {
-        data.isEco = doc["isEco"];
-    }
-
-    file.close();
-}
+ESP_CONFIG_PAGE_LOGGING::ConfigPageSerial webserial(Serial);
+#define LOG(str) webserial.print(str)
+#define LOGN(str) webserial.println(str)
+#define LOGF(str, params...) webserial.printf(str, params)
 
 void(* resetFunc) (void) = 0;
 
 void IRAM_ATTR resetConfig() {
-    SERIAL_LOG_LN("Resetting the wifi configuration.");
-    manager.resetSettings();
     ESP.eraseConfig();
 
     if (LittleFS.exists(DATA_FILE)) {
@@ -184,10 +94,10 @@ void updateState() {
             break;
     }
 
-    SERIAL_LOG("Sending state: ");
-    SERIAL_LOG(data.isOn ? "POWER ON, " : "POWER OFF, ");
-    SERIAL_LOG(data.isAutoMode ? "IS AUTO MODE, " : "AUTO MODE DISABLED, ");
-    SERIAL_LOG_LN("TEMP " + String(targetTemp) + String(data.isAutoMode ? "(AUTO)" : ""));
+    LOG("Sending state: ");
+    LOG(data.isOn ? "POWER ON, " : "POWER OFF, ");
+    LOG(data.isAutoMode ? "IS AUTO MODE, " : "AUTO MODE DISABLED, ");
+    LOGN("TEMP " + String(targetTemp) + String(data.isAutoMode ? "(AUTO)" : ""));
 
     acIr.setTemp(targetTemp);
     acIr.setMode(kSamsungAcCool);
@@ -201,19 +111,17 @@ void updateState() {
 
 void power(bool &on) {
     data.isOn = on;
-    saveData();
     updateState();
 }
 
 void setTemp(uint8_t temp) {
-    SERIAL_LOG_LN("Setting temp.");
+    LOGN("Setting temp.");
     if (data.isAutoMode) {
-        SERIAL_LOG_LN("Is auto mode, ignoring target temp event.");
+        LOGN("Is auto mode, ignoring target temp event.");
         return;
     }
 
     data.targetTemp = temp;
-    saveData();
     updateState();
 }
 
@@ -234,7 +142,6 @@ void setMode(String &mode) {
         data.swing = false;
     }
 
-    saveData();
     updateState();
 }
 
@@ -246,47 +153,12 @@ void setFanSpeed(int &range) {
         data.fanSpeed = range;
     }
 
-    saveData();
     updateState();
 }
 
-bool handleOTAUpdate(const String& url, int major, int minor, int patch, bool forceUpdate) {
-    Version currentVersion  = Version(FIRMWARE_VERSION);
-    Version newVersion      = Version(String(major) + "." + String(minor) + "." + String(patch));
-    bool updateAvailable    = newVersion > currentVersion;
-
-    SERIAL_LOG("URL: ");
-    SERIAL_LOG_LN(url.c_str());
-    SERIAL_LOG("Current version: ");
-    SERIAL_LOG_LN(currentVersion.toString());
-    SERIAL_LOG("New version: ");
-    SERIAL_LOG_LN(newVersion.toString());
-    if (forceUpdate) SERIAL_LOG_LN("Enforcing OTA update!");
-
-    // Handle OTA update based on forceUpdate flag and update availability
-    if (forceUpdate || updateAvailable) {
-        if (updateAvailable) {
-            SERIAL_LOG_LN("Update available!");
-        }
-
-        String result = startOtaUpdate(url);
-        if (!result.isEmpty()) {
-            SinricPro.setResponseMessage(std::move(result));
-            return false;
-        }
-        return true;
-    } else {
-        String result = "Current version is up to date.";
-        SinricPro.setResponseMessage(std::move(result));
-        SERIAL_LOG_LN(result);
-        return false;
-    }
-}
-
 void setup() {
-#ifdef ENABLE_SERIAL_LOGGING
+#ifdef ENABLE_LOGGING
     Serial.begin(9600);
-    bool enableSerial = true;
 #else
     bool enableSerial = false;
 #endif
@@ -295,36 +167,30 @@ void setup() {
     digitalWrite(LED_BUILTIN, HIGH);
 
     LittleFS.begin();
-//    resetConfig(); // Enable to reset
 
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+    char defaultCreds[] = "admin";
+    adminUsername->value = (char*) malloc(strlen(defaultCreds)+1);
+    strcpy(adminUsername->value, defaultCreds);
 
-    WiFiManagerParameter weatherApiKey("weatherApiKey", "weatherApiKey", NULL, OPENWEATHER_API_KEY_SIZE);
-    WiFiManagerParameter lat("lat", "latitude", NULL, LAT_SIZE);
-    WiFiManagerParameter lon("lon", "longitude", NULL, LON_SIZE);
-    WiFiManagerParameter appKey("appKey", "Sinric app key", NULL, APP_KEY_SIZE);
-    WiFiManagerParameter appSecret("appSecret", "Sinric app secret", NULL, APP_SECRET_SIZE);
-    WiFiManagerParameter deviceId("deviceId", "Sinric device id", NULL, DEVICE_ID_SIZE);
+    adminPassword->value = (char*) malloc(strlen(defaultCreds)+1);
+    strcpy(adminPassword->value, defaultCreds);
 
-    manager.addParameter(&weatherApiKey);
-    manager.addParameter(&lat);
-    manager.addParameter(&lon);
-    manager.addParameter(&appKey);
-    manager.addParameter(&appSecret);
-    manager.addParameter(&deviceId);
+    ESP_CONFIG_PAGE::setSerial(&webserial);
 
-    manager.setSaveConfigCallback([]() {
-        shouldSaveCredentials = true;
-    });
-    manager.autoConnect(AP_NAME, AP_PASSWORD);
+    addEnvVar(adminUsername);
+    addEnvVar(adminPassword);
+    addEnvVar(weatherApiKey);
+    addEnvVar(lat);
+    addEnvVar(lon);
+    addEnvVar(appKey);
+    addEnvVar(appSecret);
+    addEnvVar(deviceId);
 
-#ifdef ENABLE_SERIAL_LOGGING
-    manager.setDebugOutput(true);
-#endif
+    ESP_CONFIG_PAGE::setAndUpdateStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("env"));
+    ESP_CONFIG_PAGE::setAPConfig("ESP32-SAC-IOT", "adminadmin");
+    ESP_CONFIG_PAGE::tryConnectWifi(false);
+    ESP_CONFIG_PAGE::initModules(&server, String(adminUsername->value), String(adminPassword->value), "ESP32-SAC-IOT");
 
-    dxlogger::setup(TZ_America_Fortaleza,
-                    30000,
-                    enableSerial);
     dxweather::setup();
     data.fanSpeed = 1;
     data.isAutoMode = false;
@@ -335,107 +201,91 @@ void setup() {
     data.degreesSubtract = 1;
     data.isEco = false;
 
-    if (shouldSaveCredentials) {
-        SERIAL_LOG_LN("Saving data");
-        strncpy(data.weatherApiKey, weatherApiKey.getValue(), OPENWEATHER_API_KEY_SIZE);
-        strncpy(data.lat, lat.getValue(), LAT_SIZE);
-        strncpy(data.lon, lon.getValue(), LON_SIZE);
-        strncpy(data.appKey, appKey.getValue(), APP_KEY_SIZE);
-        strncpy(data.appSecret, appSecret.getValue(), APP_SECRET_SIZE);
-        strncpy(data.deviceId, deviceId.getValue(), DEVICE_ID_SIZE);
-        saveData();
-    } else {
-        SERIAL_LOG_LN("Recovering data.");
-        recoverData();
-    }
+    server.begin();
+    ESP_CONFIG_PAGE_LOGGING::enableLogging(String(adminUsername->value), String(adminPassword->value), webserial);
 
-    SERIAL_LOG_LN("Startup sinric....");
-    acIr.begin();
-    SinricACWithTemp &localAc = SinricPro[data.deviceId];
-    ac = &localAc;
-
-    ac->onPowerState([](const String &deviceId, bool &state) {
-        SERIAL_LOG("SINRIC_EVENT: Turn ");
-        SERIAL_LOG_LN(state ? "ON" : "OFF");
-        power(state);
-        return true;
-    });
-
-    ac->onTargetTemperature([](const String &deviceId, float &temperature) {
-        SERIAL_LOG("SINRIC_EVENT: Set target temperature to ");
-        SERIAL_LOG_LN(String(temperature));
-        setTemp(temperature);
-        return true;
-    });
-
-    ac->onThermostatMode([](const String &deviceId, String &mode) {
-        SERIAL_LOG("SINRIC_EVENT: Set mode to ");
-        SERIAL_LOG_LN(mode);
-        setMode(mode);
-        return true;
-    });
-
-    ac->onRangeValue([](const String &deviceId, int &rangeValue) {
-        SERIAL_LOG("SINRIC_EVENT: Set fan speed to ");
-        SERIAL_LOG_LN(String(rangeValue));
-        setFanSpeed(rangeValue);
-        return true;
-    });
-
-//    ac.onAdjustTargetTemperature(onAdjustTargetTemperature);
-//    ac.onAdjustRangeValue(onAdjustRangeValue);
-
-    // setup SinricPro
-    SinricPro.onConnected([](){ SERIAL_LOG_LN("Connected to SinricPro"); });
-    SinricPro.onDisconnected([](){ SERIAL_LOG_LN("Disconnected from SinricPro"); });
-    SinricPro.onOTAUpdate(handleOTAUpdate);
-
-    SinricPro.begin(data.appKey, data.appSecret);
-    ac->sendPowerStateEvent(data.isOn);
-    ac->sendTargetTemperatureEvent(data.targetTemp);
-    ac->sendTemperatureEvent(data.roomTemp);
-    ac->sendRangeValueEvent(data.fanSpeed);
-    ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
-
-    lastTempEvent = -TEMP_UPDATE_INTERVAL-1;
-    SERIAL_LOG_LN("Startup done");
+    LOGN("Startup done");
     delay(5000);
 }
 
 void loop() {
     SinricPro.handle();
-    dxlogger::update();
 
-    if (SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
+    if (!sinricInit && ESP_CONFIG_PAGE::isWiFiReady())
+    {
+        LOGN("Startup sinric....");
+        acIr.begin();
+        SinricACWithTemp &localAc = SinricPro[deviceId->value];
+        ac = &localAc;
+
+        ac->onPowerState([](const String &deviceId, bool &state) {
+            LOG("SINRIC_EVENT: Turn ");
+            LOGN(state ? "ON" : "OFF");
+            power(state);
+            return true;
+        });
+
+        ac->onTargetTemperature([](const String &deviceId, float &temperature) {
+            LOG("SINRIC_EVENT: Set target temperature to ");
+            LOGN(String(temperature));
+            setTemp(temperature);
+            return true;
+        });
+
+        ac->onThermostatMode([](const String &deviceId, String &mode) {
+            LOG("SINRIC_EVENT: Set mode to ");
+            LOGN(mode);
+            setMode(mode);
+            return true;
+        });
+
+        ac->onRangeValue([](const String &deviceId, int &rangeValue) {
+            LOG("SINRIC_EVENT: Set fan speed to ");
+            LOGN(String(rangeValue));
+            setFanSpeed(rangeValue);
+            return true;
+        });
+
+        // setup SinricPro
+        SinricPro.onConnected([](){ LOGN("Connected to SinricPro"); });
+        SinricPro.onDisconnected([](){ LOGN("Disconnected from SinricPro"); });
+
+        SinricPro.begin(appKey->value, appSecret->value);
+        ac->sendPowerStateEvent(data.isOn);
+        ac->sendTargetTemperatureEvent(data.targetTemp);
+        ac->sendTemperatureEvent(data.roomTemp);
+        ac->sendRangeValueEvent(data.fanSpeed);
+        ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
+
+        lastTempEvent = -TEMP_UPDATE_INTERVAL-1;
+        sinricInit = true;
+    }
+
+    if (sinricInit && SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
         digitalWrite(LED_BUILTIN, LOW);
         unsigned long startMillis = millis();
 
-        SERIAL_LOG_LN("Getting weather info...");
-        dxweather::getWeatherInfo(data.weatherApiKey, data.lat, data.lon, weatherInfo);
+        LOGN("Getting weather info...");
+        dxweather::getWeatherInfo(weatherApiKey->value, lat->value, lon->value, weatherInfo);
 
         if (weatherInfo.hasError) {
-            SERIAL_LOG("Error getting weather info: ");
-            SERIAL_LOG_LN(weatherInfo.error);
+            LOGF("Error getting weather info: %s\n", weatherInfo.error.c_str());
         } else {
-            SERIAL_LOG_LN("Success.");
+            LOGN("Success.");
 
-            SERIAL_LOG("Ambient temperature is ");
-            SERIAL_LOG(String(weatherInfo.temp));
-            SERIAL_LOG(", feelsLike is ");
-            SERIAL_LOG_LN(String(weatherInfo.feelsLike));
+            LOGF("Ambient temperature is %f, feelsLike is %f\n", weatherInfo.temp, weatherInfo.feelsLike);
 
-            SERIAL_LOG("Rounded temp to: ");
             float rounded = round(weatherInfo.temp);
-            SERIAL_LOG_LN(String(rounded));
+            LOGF("Rounded temp to: %f\n", rounded);
             ac->sendTemperatureEvent(rounded, weatherInfo.humidity);
-            SERIAL_LOG_LN("Temperature updated.");
+            LOGN("Temperature updated.");
 
             if (rounded != data.roomTemp || !firstUpdate) {
                 ac->sendPushNotification("Temperatura ambiente é " + String(rounded) + "°C, alterando "
                                            "temperatura do ar condicionado "
                                            "automaticamente para " + String(data.roomTemp - data.degreesSubtract) + "°C.");
 
-                SERIAL_LOG_LN("Temperature is different from current, updating AC unit.");
+                LOGN("Temperature is different from current, updating AC unit.");
                 data.roomTemp = rounded;
                 updateState();
             }

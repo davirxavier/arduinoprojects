@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "esp-config-page.h"
+#include "ESP8266WiFi.h"
 
 #define AP_NAME "ESP-DOORBELL-BELL"
 #define AP_PASSWORD "admin13246"

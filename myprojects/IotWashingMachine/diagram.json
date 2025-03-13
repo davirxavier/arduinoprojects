@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "author": "Xav",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-c3-devkitm-1",
+      "id": "esp",
+      "top": -96.3,
+      "left": -176.58,
+      "attrs": {}
+    },
+    { "type": "wokwi-slide-switch", "id": "sw1", "top": -187.6, "left": -160.1, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay1", "top": -9.4, "left": 192, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay2", "top": 67.4, "left": 192, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay3", "top": -86.2, "left": 192, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "relay4", "top": -163, "left": 192, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "esp:4", "relay2:IN", "green", [ "v0" ] ],
+    [ "esp:GND.6", "relay2:GND", "black", [ "v0" ] ],
+    [ "esp:5V.2", "relay2:VCC", "red", [ "h0" ] ],
+    [ "esp:5V.2", "relay1:VCC", "red", [ "h0" ] ],
+    [ "esp:5V.2", "relay3:VCC", "red", [ "h0" ] ],
+    [ "esp:5V.2", "relay4:VCC", "red", [ "h0" ] ],
+    [ "esp:GND.6", "relay1:GND", "black", [ "v-38.4", "h275.98" ] ],
+    [ "esp:GND.6", "relay3:GND", "black", [ "v0" ] ],
+    [ "esp:GND.6", "relay4:GND", "black", [ "v0" ] ],
+    [ "esp:5", "relay1:IN", "green", [ "h0" ] ],
+    [ "esp:6", "relay3:IN", "green", [ "h0" ] ],
+    [ "esp:7", "relay4:IN", "green", [ "h0" ] ],
+    [ "esp:GND.5", "sw1:2", "black", [ "h0" ] ],
+    [ "esp:18", "sw1:3", "green", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
