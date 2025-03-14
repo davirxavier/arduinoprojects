@@ -23,7 +23,6 @@
 #define BLYNK_PRINT Serial
 
 #include <BlynkSimpleEsp32.h>
-#include <TouchyTouch.h>
 #include <buzzer.h>
 
 #define LOG(s) Serial.print(s)
@@ -36,13 +35,12 @@
 #define OFF_VALUE LOW
 #define MODULE_POWER_CHANGE_DELAY 15000
 
-// TOOD update pins
 #define WATER_VALVE_PIN 2
 #define DRAIN_PUMP_PIN 1
 #define MOTOR_PIN 10
 #define DIRECTION_PIN 0
 #define WATER_LEVEL_SENSE_PIN 4
-#define TOUCH_BUTTON_PIN 3
+#define BUTTON_PIN 3
 #define BEEPER_PIN 9
 
 ESP_CONFIG_PAGE::WEBSERVER_T webserver(80);
@@ -51,9 +49,8 @@ ESP_CONFIG_PAGE::EnvVar *webpageUser = new ESP_CONFIG_PAGE::EnvVar("username", "
 ESP_CONFIG_PAGE::EnvVar *webpagePassword = new ESP_CONFIG_PAGE::EnvVar("password", "admin");
 ESP_CONFIG_PAGE::EnvVar *blynkAuthKey = new ESP_CONFIG_PAGE::EnvVar("blynk_auth_key", nullptr);
 
-TouchyTouch touchButton;
-unsigned long lastTouchPressedTimer = 0;
-unsigned int touchPressedCounter = 0;
+unsigned long lastButtonPressedTimer = 0;
+unsigned int buttonPressedCounter = 0;
 
 DxBuzzer buzzer(BEEPER_PIN);
 uint8_t beepsPerMode[] = {1, 2, 3, 4};
@@ -82,12 +79,18 @@ Module::Module currentModuleChange;
 unsigned long spinTime = 3000;
 unsigned long spinPauseTime = 3000;
 
-uint8_t rinseSpinMinutes = 2;
-uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
-uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
-uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
+// uint8_t rinseSpinMinutes = 2;
+// uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
+// uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
+// uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
+// uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
+// uint8_t dryMinutesByMode[] = {5, 7, 7, 10, 10};
+uint8_t rinseSpinMinutes = 1;
+uint8_t agitateMinutesByMode[] = {1, 1, 1, 1, 0};
+uint8_t agitateRinseMinutesByMode[] = {1, 1, 1, 1, 0};
+uint8_t rinseSoakMinutesByMode[] = {0, 0, 1, 1, 0};
 uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
-uint8_t dryMinutesByMode[] = {5, 7, 7, 10, 0};
+uint8_t dryMinutesByMode[] = {1, 1, 1, 1, 1};
 
 volatile unsigned int waterLevelSignalCounter = 0;
 unsigned long waterLevelSignalTimer = 0;
@@ -116,6 +119,7 @@ void turnOffAllModules()
     digitalWrite(MOTOR_PIN, OFF_VALUE);
     digitalWrite(DRAIN_PUMP_PIN, OFF_VALUE);
     digitalWrite(DIRECTION_PIN, OFF_VALUE);
+    changeModulePowerQueued = false;
 }
 
 void changeModulePower(Module::Module module, bool on)
@@ -165,7 +169,7 @@ void recoverData()
     memcpy(&currentData, bytes, size);
 }
 
-void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF)
+void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF, bool manual = false)
 {
     if (stateChange == States::MODE && currentData.currentStage != Stage::OFF)
     {
@@ -177,13 +181,20 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
     {
     case States::POWER:
         {
+            LOGF("Changing power state: %s\n", isRunning ? "running" : "not running");
             if (isRunning)
             {
-                currentData.currentStage = Stage::WASH_FILLING_UP;
+                if (currentData.currentMode == Mode::SPIN)
+                {
+                    motorTimeCounter = millis();
+                    changeModulePower(Module::MOTOR, true);
+                }
+
+                updateStates(States::STAGE, currentData.currentMode == Mode::SPIN ? Stage::DRY_SPINNING : Stage::WASH_FILLING_UP);
             }
             else
             {
-                currentData.currentStage = Stage::OFF;
+                updateStates(States::STAGE, Stage::OFF);
             }
 
             currentData.currentRinse = 0;
@@ -242,7 +253,7 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
                 }
             case Stage::OFF:
                 {
-                    if (blinkReady)
+                    if (blinkReady && !manual)
                     {
                         Blynk.logEvent(Events::EVENT_IDS[Events::CYCLE_ENDED]);
                     }
@@ -251,15 +262,17 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
                     currentData.currentRinse = 0;
                     buzzer.beep(3000);
                     isRunning = false;
+                    VW(POWER_PIN, BooleanEnum::FALSE);
                     break;
                 }
             }
 
-            currentData.currentStage = newStage;
             if (currentData.currentStage != newStage)
             {
                 VW(STAGE_PIN, newStage);
             }
+
+            currentData.currentStage = newStage;
             break;
         }
     }
@@ -305,7 +318,7 @@ BLYNK_WRITE(POWER_PIN)
     auto power = static_cast<BooleanEnum::Boolean>(param.asInt());
     isRunning = power == BooleanEnum::TRUE;
     LOGF("Power state change: %s.\n", isRunning ? "on" : "off");
-    updateStates(States::POWER);
+    updateStates(States::POWER, Stage::OFF, true);
 }
 
 // Mode
@@ -337,10 +350,13 @@ void spinAlternating()
 
     if (!spinning && currentMillis - motorTimeCounter > spinPauseTime)
     {
+        LOGN("Spin turn on.");
+
         spinning = true;
+        motorTimeCounter = millis();
         direction = !direction;
         digitalWrite(DIRECTION_PIN, direction ? HIGH : LOW);
-        changeModulePower(Module::MOTOR, true);
+        digitalWrite(MOTOR_PIN, ON_VALUE);
     }
 
     if (spinning && currentMillis - motorTimeCounter > spinTime)
@@ -357,7 +373,6 @@ void setup()
     Serial.begin(115200);
     LOGN("Initializing.");
 
-    touchButton.begin(TOUCH_BUTTON_PIN, 30);
     pinMode(WATER_LEVEL_SENSE_PIN, INPUT_PULLUP);
     attachInterrupt(WATER_LEVEL_SENSE_PIN, waterLevelSignalReceived, FALLING);
 
@@ -419,13 +434,12 @@ void loop()
 {
     webserver.handleClient();
     ESP_CONFIG_PAGE::loop();
-    touchButton.update();
 
     if (millis() - waterLevelSignalTimer > 1000)
     {
         bool newWaterLevelReached = waterLevelSignalCounter > 10;
 
-        if (newWaterLevelReached || (!newWaterLevelReached && waterLevelReached))
+        if (newWaterLevelReached && !waterLevelReached)
         {
             waterLevelReachedTime = millis();
         }
@@ -446,15 +460,15 @@ void loop()
     if (blinkInit && !blinkReady && Blynk.connected())
     {
         LOGN("Blynk init successful.");
+        blinkReady = true;
 
         if (powerLoss)
         {
-            VW(POWER_PIN, BooleanEnum::FALSE);
+            VW(POWER_PIN, BooleanEnum::TRUE);
             VW(STAGE_PIN, currentData.currentStage);
+            isRunning = true;
             powerLoss = false;
         }
-
-        blinkReady = true;
     }
 
     if (blinkReady)
@@ -462,36 +476,8 @@ void loop()
         Blynk.run();
     }
 
-    if (!isRunning || currentData.currentStage == Stage::OFF)
+    if (!isRunning)
     {
-        unsigned long currentMillis = millis();
-        bool isPressed = touchButton.pressed();
-
-        if (currentMillis - lastTouchPressedTimer > 1000 && isPressed)
-        {
-            touchPressedCounter++;
-            lastTouchPressedTimer = millis();
-        }
-
-        if (currentMillis - lastTouchPressedTimer > 350 && !isPressed)
-        {
-            if (touchPressedCounter >= 5)
-            {
-                isRunning = true;
-                updateStates(States::POWER);
-            }
-            else if (touchPressedCounter < 4)
-            {
-                Mode::Mode newMode = Mode::cycleMode(currentData.currentMode);
-                if (changeMode(newMode))
-                {
-                    updateStates(States::MODE);
-                    buzzer.beep(350, beepsPerMode[newMode], 100);
-                }
-            }
-
-            touchPressedCounter = 0;
-        }
         return;
     }
 
@@ -555,7 +541,14 @@ void loop()
             if (isWaterDrained())
             {
                 bool hasRinse = rinseCyclesByMode[currentData.currentMode] > 0;
-                updateStates(States::STAGE, hasRinse ? Stage::RINSE_FILLING_UP : Stage::OFF);
+                updateStates(States::STAGE, hasRinse ? Stage::RINSE_FILLING_UP : Stage::DRY_SPINNING);
+
+                if (!hasRinse)
+                {
+                    changeModulePower(Module::MOTOR, true);
+                    motorTimeCounter = millis();
+                    spinning = false;
+                }
             }
             break;
         }
@@ -609,9 +602,13 @@ void loop()
 
                 bool hasNextCycle = currentData.currentRinse < rinseCyclesByMode[currentData.currentMode];
                 updateStates(States::STAGE, hasNextCycle ? Stage::RINSE_FILLING_UP : Stage::DRY_SPINNING);
-                changeModulePower(Module::MOTOR, true);
-                motorTimeCounter = millis();
+
                 spinning = false;
+                if (!hasNextCycle)
+                {
+                    changeModulePower(Module::MOTOR, true);
+                    motorTimeCounter = millis();
+                }
             }
             break;
         }
@@ -629,22 +626,22 @@ void loop()
         }
     }
 
-    unsigned long currentMillis = millis();
-    bool isPressed = touchButton.pressed();
-
-    if (currentMillis - lastTouchPressedTimer > 1000 && isPressed)
-    {
-        touchPressedCounter++;
-        lastTouchPressedTimer = millis();
-    }
-
-    if (currentMillis - lastTouchPressedTimer > 350 && !isPressed)
-    {
-        if (touchPressedCounter > 5)
-        {
-            updateStates(States::STAGE, Stage::OFF);
-        }
-
-        touchPressedCounter = 0;
-    }
+    // unsigned long currentMillis = millis();
+    // bool isPressed = touchButton.pressed();
+    //
+    // if (currentMillis - lastTouchPressedTimer > 1000 && isPressed)
+    // {
+    //     touchPressedCounter++;
+    //     lastTouchPressedTimer = millis();
+    // }
+    //
+    // if (currentMillis - lastTouchPressedTimer > 350 && !isPressed)
+    // {
+    //     if (touchPressedCounter > 5)
+    //     {
+    //         updateStates(States::STAGE, Stage::OFF);
+    //     }
+    //
+    //     touchPressedCounter = 0;
+    // }
 }
