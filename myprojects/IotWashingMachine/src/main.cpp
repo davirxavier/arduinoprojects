@@ -23,14 +23,15 @@
 #define BLYNK_PRINT Serial
 
 #include <BlynkSimpleEsp32.h>
-#include <buzzer.h>
+#include <OneButton.h>
+#include <led.h>
 
 #define LOG(s) Serial.print(s)
 #define LOGN(s) Serial.println(s)
 #define LOGF(s, p...) Serial.printf(s, p)
 #define VW(p, v...) LOGF("Virtual write for pin %d.\n", p); if (blinkReady) Blynk.virtualWrite(p, v)
 
-#define DATA_FILE "/saved.txt"
+#define DATA_FILE "/saved2.txt"
 #define ON_VALUE HIGH
 #define OFF_VALUE LOW
 #define MODULE_POWER_CHANGE_DELAY 15000
@@ -41,7 +42,7 @@
 #define DIRECTION_PIN 0
 #define WATER_LEVEL_SENSE_PIN 4
 #define BUTTON_PIN 3
-#define BEEPER_PIN 9
+#define LED_PIN 9
 
 ESP_CONFIG_PAGE::WEBSERVER_T webserver(80);
 
@@ -52,8 +53,9 @@ ESP_CONFIG_PAGE::EnvVar *blynkAuthKey = new ESP_CONFIG_PAGE::EnvVar("blynk_auth_
 unsigned long lastButtonPressedTimer = 0;
 unsigned int buttonPressedCounter = 0;
 
-DxBuzzer buzzer(BEEPER_PIN);
-uint8_t beepsPerMode[] = {1, 2, 3, 4};
+OneButton button(BUTTON_PIN, true, true);
+DxLed led(LED_PIN, true);
+uint8_t blinksPerMode[] = {1, 2, 3, 4};
 
 const char *nodeName = "ESP-WM-01";
 const char *apPass = "admin123";
@@ -76,10 +78,10 @@ unsigned long modulePowerChangeTimer = 0;
 bool changeModulePowerQueued = false;
 Module::Module currentModuleChange;
 
-unsigned long spinTime = 3000;
-unsigned long spinPauseTime = 3000;
+unsigned long spinTime = 1000;
+unsigned long spinPauseTime = 2000;
 
-// uint8_t rinseSpinMinutes = 2;
+// uint8_t rinseSpinMinutes = 3;
 // uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
 // uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
 // uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
@@ -96,6 +98,14 @@ volatile unsigned int waterLevelSignalCounter = 0;
 unsigned long waterLevelSignalTimer = 0;
 bool waterLevelReached = false;
 unsigned long waterLevelReachedTime = 0;
+
+unsigned long elapsedTimer = 0;
+
+unsigned long subtractElapsed(unsigned long millis)
+{
+    unsigned long elapsedMillis = currentData.elapsedMinutes * 60 * 1000;
+    return millis > elapsedMillis ? millis - elapsedMillis : 60000;
+}
 
 void IRAM_ATTR waterLevelSignalReceived()
 {
@@ -135,6 +145,11 @@ void changeModulePower(Module::Module module, bool on)
     modulePowerChangeTimer = millis();
     changeModulePowerQueued = true;
     currentModuleChange = module;
+
+    if (module == Module::MOTOR)
+    {
+        motorTimeCounter = millis();
+    }
 }
 
 void saveData()
@@ -191,10 +206,14 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
                 }
 
                 updateStates(States::STAGE, currentData.currentMode == Mode::SPIN ? Stage::DRY_SPINNING : Stage::WASH_FILLING_UP);
+                led.on();
+                button.setPressMs(5000);
             }
             else
             {
-                updateStates(States::STAGE, Stage::OFF);
+                updateStates(States::STAGE, Stage::OFF, manual);
+                led.stop();
+                button.setPressMs(2000);
             }
 
             currentData.currentRinse = 0;
@@ -245,10 +264,12 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
                 }
             case Stage::RINSE_SPINNING:
                 {
+                    changeModulePower(Module::MOTOR, true);
                     break;
                 }
             case Stage::DRY_SPINNING:
                 {
+                    changeModulePower(Module::MOTOR, true);
                     break;
                 }
             case Stage::OFF:
@@ -260,7 +281,6 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
 
                     turnOffAllModules();
                     currentData.currentRinse = 0;
-                    buzzer.beep(3000);
                     isRunning = false;
                     VW(POWER_PIN, BooleanEnum::FALSE);
                     break;
@@ -273,6 +293,7 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
             }
 
             currentData.currentStage = newStage;
+            currentData.elapsedMinutes = 0;
             break;
         }
     }
@@ -282,23 +303,32 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
 
 void skipStage()
 {
-    bool found = false;
-    for (unsigned int i = 0; i < validStagesCount; i++)
-    {
-        if (currentData.currentStage == validStagesForSkip[i])
-        {
-            found = true;
-            break;
-        }
-    }
-
-    if (!found)
-    {
-        return;
-    }
-
-    LOGN("Skipping stage.");
-    updateStates(States::STAGE, static_cast<Stage::Stage>(currentData.currentStage+1));
+    // bool found = false;
+    // for (unsigned int i = 0; i < validStagesCount; i++)
+    // {
+    //     if (currentData.currentStage == validStagesForSkip[i])
+    //     {
+    //         found = true;
+    //         break;
+    //     }
+    // }
+    //
+    // if (!found)
+    // {
+    //     return;
+    // }
+    //
+    // LOGN("Skipping stage.");
+    //
+    // auto newStage = static_cast<Stage::Stage>(currentData.currentStage+1);
+    // if (newStage == Stage::OFF)
+    // {
+    //     updateStates(States::POWER, Stage::OFF, true);
+    // }
+    // else
+    // {
+    //     updateStates(States::STAGE, newStage);
+    // }
 }
 
 bool changeMode(Mode::Mode newMode)
@@ -367,9 +397,40 @@ void spinAlternating()
     }
 }
 
+void buttonLongPress()
+{
+    LOGN("Long press detected");
+    if (isRunning)
+    {
+        isRunning = false;
+        updateStates(States::POWER, Stage::OFF, true);
+    }
+    else
+    {
+        led.blink(500, blinksPerMode[Mode::cycleMode(currentData.currentMode)], 300, false);
+        Mode::Mode newMode = Mode::cycleMode(currentData.currentMode);
+        if (changeMode(newMode))
+        {
+            VW(MODE_PIN, newMode);
+        }
+    }
+}
+
+void buttonShortPress()
+{
+    LOGN("Short press detected.");
+    if (isRunning)
+    {
+        return;
+    }
+
+    isRunning = true;
+    VW(POWER_PIN, BooleanEnum::TRUE);
+    updateStates(States::POWER);
+}
+
 void setup()
 {
-    delay(2000);
     Serial.begin(115200);
     LOGN("Initializing.");
 
@@ -382,7 +443,11 @@ void setup()
     pinMode(DRAIN_PUMP_PIN, OUTPUT);
     turnOffAllModules();
 
-    buzzer.beep(800);
+    button.debounce(true);
+    button.setDebounceMs(-50);
+    button.attachClick(buttonShortPress);
+    button.attachLongPressStart(buttonLongPress);
+    button.setPressMs(2000);
 
     LOGN("Trying to mount LittleFS.");
     if (!LittleFS.begin(false /* false: Do not format if mount failed */))
@@ -434,6 +499,8 @@ void loop()
 {
     webserver.handleClient();
     ESP_CONFIG_PAGE::loop();
+    button.tick();
+    led.update();
 
     if (millis() - waterLevelSignalTimer > 1000)
     {
@@ -468,6 +535,8 @@ void loop()
             VW(STAGE_PIN, currentData.currentStage);
             isRunning = true;
             powerLoss = false;
+            led.on();
+            updateStates(States::STAGE, currentData.currentStage);
         }
     }
 
@@ -479,6 +548,14 @@ void loop()
     if (!isRunning)
     {
         return;
+    }
+
+    if (millis() - elapsedTimer > 60000)
+    {
+        currentData.elapsedMinutes++;
+        LOGF("Update elapsed minutes: %d\n", currentData.elapsedMinutes);
+        saveData();
+        elapsedTimer = millis();
     }
 
     if (changeModulePowerQueued)
@@ -526,7 +603,7 @@ void loop()
         }
     case Stage::WASH_SHAKING:
         {
-            if (millis() - shakeSoakStartTime > (agitateMinutesByMode[currentData.currentMode] * 60 * 1000))
+            if (millis() - shakeSoakStartTime > subtractElapsed(agitateMinutesByMode[currentData.currentMode] * 60 * 1000))
             {
                 updateStates(States::STAGE, Stage::WASH_DRAINING);
             }
@@ -542,13 +619,6 @@ void loop()
             {
                 bool hasRinse = rinseCyclesByMode[currentData.currentMode] > 0;
                 updateStates(States::STAGE, hasRinse ? Stage::RINSE_FILLING_UP : Stage::DRY_SPINNING);
-
-                if (!hasRinse)
-                {
-                    changeModulePower(Module::MOTOR, true);
-                    motorTimeCounter = millis();
-                    spinning = false;
-                }
             }
             break;
         }
@@ -564,7 +634,7 @@ void loop()
         }
     case Stage::RINSE_SOAKING:
         {
-            if (millis() - shakeSoakStartTime > (rinseSoakMinutesByMode[currentData.currentMode] * 60 * 1000))
+            if (millis() - shakeSoakStartTime > subtractElapsed(rinseSoakMinutesByMode[currentData.currentMode] * 60 * 1000))
             {
                 updateStates(States::STAGE, Stage::RINSE_SHAKING);
                 shakeSoakStartTime = millis();
@@ -573,7 +643,7 @@ void loop()
         }
     case Stage::RINSE_SHAKING:
         {
-            if (millis() - shakeSoakStartTime > (agitateRinseMinutesByMode[currentData.currentMode] * 60 * 1000))
+            if (millis() - shakeSoakStartTime > subtractElapsed(agitateRinseMinutesByMode[currentData.currentMode] * 60 * 1000))
             {
                 updateStates(States::STAGE, Stage::RINSE_DRAINING);
             }
@@ -596,27 +666,21 @@ void loop()
         }
     case Stage::RINSE_SPINNING:
         {
-            if (millis() - motorTimeCounter > (rinseSpinMinutes * 60 * 1000))
+            if (millis() - motorTimeCounter > subtractElapsed(rinseSpinMinutes * 60 * 1000))
             {
                 turnOffAllModules();
 
                 bool hasNextCycle = currentData.currentRinse < rinseCyclesByMode[currentData.currentMode];
                 updateStates(States::STAGE, hasNextCycle ? Stage::RINSE_FILLING_UP : Stage::DRY_SPINNING);
-
-                spinning = false;
-                if (!hasNextCycle)
-                {
-                    changeModulePower(Module::MOTOR, true);
-                    motorTimeCounter = millis();
-                }
             }
             break;
         }
     case Stage::DRY_SPINNING:
         {
-            if (millis() - motorTimeCounter > (dryMinutesByMode[currentData.currentMode] * 60 * 1000))
+            if (millis() - motorTimeCounter > subtractElapsed(dryMinutesByMode[currentData.currentMode] * 60 * 1000))
             {
-                updateStates(States::STAGE, Stage::OFF);
+                isRunning = false;
+                updateStates(States::POWER);
             }
             break;
         }
@@ -625,23 +689,4 @@ void loop()
             break;
         }
     }
-
-    // unsigned long currentMillis = millis();
-    // bool isPressed = touchButton.pressed();
-    //
-    // if (currentMillis - lastTouchPressedTimer > 1000 && isPressed)
-    // {
-    //     touchPressedCounter++;
-    //     lastTouchPressedTimer = millis();
-    // }
-    //
-    // if (currentMillis - lastTouchPressedTimer > 350 && !isPressed)
-    // {
-    //     if (touchPressedCounter > 5)
-    //     {
-    //         updateStates(States::STAGE, Stage::OFF);
-    //     }
-    //
-    //     touchPressedCounter = 0;
-    // }
 }

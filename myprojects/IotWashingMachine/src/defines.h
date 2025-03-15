@@ -82,14 +82,17 @@ struct Data
     Mode::Mode currentMode;
     Stage::Stage currentStage;
     uint8_t currentRinse;
+    unsigned int elapsedMinutes;
 
     Data()
     {
         currentMode = Mode::QUICK;
         currentStage = Stage::OFF;
         currentRinse = 0;
+        elapsedMinutes = 0;
     }
 };
+
 namespace Events
 {
     char EVENT_IDS[2][32] = {"cycle_ended", "power_failure"};
