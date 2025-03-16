@@ -78,7 +78,7 @@ unsigned long modulePowerChangeTimer = 0;
 bool changeModulePowerQueued = false;
 Module::Module currentModuleChange;
 
-unsigned long spinTime = 1000;
+unsigned long spinTime = 250;
 unsigned long spinPauseTime = 2000;
 
 // uint8_t rinseSpinMinutes = 3;
@@ -384,8 +384,8 @@ void spinAlternating()
 
         spinning = true;
         motorTimeCounter = millis();
-        direction = !direction;
         digitalWrite(DIRECTION_PIN, direction ? HIGH : LOW);
+        delay(15);
         digitalWrite(MOTOR_PIN, ON_VALUE);
     }
 
@@ -394,6 +394,7 @@ void spinAlternating()
         spinning = false;
         motorTimeCounter = currentMillis;
         turnOffAllModules();
+        direction = !direction;
     }
 }
 
@@ -432,6 +433,7 @@ void buttonShortPress()
 void setup()
 {
     Serial.begin(115200);
+    delay(1500);
     LOGN("Initializing.");
 
     pinMode(WATER_LEVEL_SENSE_PIN, INPUT_PULLUP);
