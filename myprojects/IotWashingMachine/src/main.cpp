@@ -57,7 +57,7 @@ OneButton button(BUTTON_PIN, true, true);
 DxLed led(LED_PIN, true);
 uint8_t blinksPerMode[] = {1, 2, 3, 4};
 
-const char *nodeName = "ESP-WM-01";
+const char *nodeName = "ESP-WM-03";
 const char *apPass = "admin123";
 
 bool blinkInit = false;
@@ -78,21 +78,21 @@ unsigned long modulePowerChangeTimer = 0;
 bool changeModulePowerQueued = false;
 Module::Module currentModuleChange;
 
-unsigned long spinTime = 250;
-unsigned long spinPauseTime = 2000;
+unsigned long spinTime = 300;
+unsigned long spinPauseTime = 1100;
 
-// uint8_t rinseSpinMinutes = 3;
-// uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
-// uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
-// uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
-// uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
-// uint8_t dryMinutesByMode[] = {5, 7, 7, 10, 10};
-uint8_t rinseSpinMinutes = 1;
-uint8_t agitateMinutesByMode[] = {1, 1, 1, 1, 0};
-uint8_t agitateRinseMinutesByMode[] = {1, 1, 1, 1, 0};
-uint8_t rinseSoakMinutesByMode[] = {0, 0, 1, 1, 0};
+uint8_t rinseSpinMinutes = 3;
+uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
+uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
+uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
 uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
-uint8_t dryMinutesByMode[] = {1, 1, 1, 1, 1};
+uint8_t dryMinutesByMode[] = {5, 7, 7, 10, 10};
+// uint8_t rinseSpinMinutes = 1;
+// uint8_t agitateMinutesByMode[] = {1, 1, 1, 1, 0};
+// uint8_t agitateRinseMinutesByMode[] = {1, 1, 1, 1, 0};
+// uint8_t rinseSoakMinutesByMode[] = {0, 0, 1, 1, 0};
+// uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
+// uint8_t dryMinutesByMode[] = {1, 1, 1, 1, 1};
 
 volatile unsigned int waterLevelSignalCounter = 0;
 unsigned long waterLevelSignalTimer = 0;
@@ -119,7 +119,7 @@ bool isWaterFilled()
 
 bool isWaterDrained()
 {
-    return !waterLevelReached && millis() - waterLevelReachedTime > MODULE_POWER_CHANGE_DELAY;
+    return !waterLevelReached && millis() - waterLevelReachedTime > (MODULE_POWER_CHANGE_DELAY * 3);
 }
 
 void turnOffAllModules()
@@ -384,8 +384,8 @@ void spinAlternating()
 
         spinning = true;
         motorTimeCounter = millis();
+        direction = !direction;
         digitalWrite(DIRECTION_PIN, direction ? HIGH : LOW);
-        delay(15);
         digitalWrite(MOTOR_PIN, ON_VALUE);
     }
 
@@ -393,8 +393,7 @@ void spinAlternating()
     {
         spinning = false;
         motorTimeCounter = currentMillis;
-        turnOffAllModules();
-        direction = !direction;
+        digitalWrite(MOTOR_PIN, OFF_VALUE);
     }
 }
 
@@ -508,7 +507,7 @@ void loop()
     {
         bool newWaterLevelReached = waterLevelSignalCounter > 10;
 
-        if (newWaterLevelReached && !waterLevelReached)
+        if (newWaterLevelReached != waterLevelReached)
         {
             waterLevelReachedTime = millis();
         }
@@ -524,6 +523,14 @@ void loop()
         Blynk.config(blynkAuthKey->value);
         Blynk.connect();
         blinkInit = true;
+
+        if (powerLoss)
+        {
+            isRunning = true;
+            powerLoss = true;
+            led.on();
+            updateStates(States::STAGE, currentData.currentStage);
+        }
     }
 
     if (blinkInit && !blinkReady && Blynk.connected())
@@ -535,10 +542,6 @@ void loop()
         {
             VW(POWER_PIN, BooleanEnum::TRUE);
             VW(STAGE_PIN, currentData.currentStage);
-            isRunning = true;
-            powerLoss = false;
-            led.on();
-            updateStates(States::STAGE, currentData.currentStage);
         }
     }
 
@@ -582,6 +585,7 @@ void loop()
             case Module::DRAIN_PUMP:
                 {
                     digitalWrite(DRAIN_PUMP_PIN, ON_VALUE);
+                    digitalWrite(DIRECTION_PIN, ON_VALUE);
                     break;
                 }
             }
@@ -660,9 +664,6 @@ void loop()
             if (isWaterDrained())
             {
                 updateStates(States::STAGE, Stage::RINSE_SPINNING);
-                changeModulePower(Module::MOTOR, true);
-                motorTimeCounter = millis();
-                spinning = false;
             }
             break;
         }
