@@ -34,7 +34,7 @@
 #define DATA_FILE "/saved2.txt"
 #define ON_VALUE HIGH
 #define OFF_VALUE LOW
-#define MODULE_POWER_CHANGE_DELAY 15000
+#define MODULE_POWER_CHANGE_DELAY 20000
 
 #define WATER_VALVE_PIN 2
 #define DRAIN_PUMP_PIN 1
@@ -57,7 +57,7 @@ OneButton button(BUTTON_PIN, true, true);
 DxLed led(LED_PIN, true);
 uint8_t blinksPerMode[] = {1, 2, 3, 4};
 
-const char *nodeName = "ESP-WM-03";
+const char *nodeName = "ESP-WM-04";
 const char *apPass = "admin123";
 
 bool blinkInit = false;
@@ -86,7 +86,7 @@ uint8_t agitateMinutesByMode[] = {5, 10, 20, 30, 0};
 uint8_t agitateRinseMinutesByMode[] = {3, 5, 5, 5, 0};
 uint8_t rinseSoakMinutesByMode[] = {0, 0, 3, 5, 0};
 uint8_t rinseCyclesByMode[] = {0, 1, 2, 3, 0};
-uint8_t dryMinutesByMode[] = {5, 7, 7, 10, 10};
+uint8_t dryMinutesByMode[] = {5, 15, 15, 20, 10};
 // uint8_t rinseSpinMinutes = 1;
 // uint8_t agitateMinutesByMode[] = {1, 1, 1, 1, 0};
 // uint8_t agitateRinseMinutesByMode[] = {1, 1, 1, 1, 0};
@@ -265,11 +265,13 @@ void updateStates(States::States stateChange, Stage::Stage newStage = Stage::OFF
             case Stage::RINSE_SPINNING:
                 {
                     changeModulePower(Module::MOTOR, true);
+                    digitalWrite(DRAIN_PUMP_PIN, ON_VALUE);
                     break;
                 }
             case Stage::DRY_SPINNING:
                 {
                     changeModulePower(Module::MOTOR, true);
+                    digitalWrite(DRAIN_PUMP_PIN, ON_VALUE);
                     break;
                 }
             case Stage::OFF:
@@ -579,6 +581,8 @@ void loop()
             case Module::MOTOR:
                 {
                     motorTimeCounter = millis();
+                    digitalWrite(DIRECTION_PIN, ON_VALUE);
+                    delay(10);
                     digitalWrite(MOTOR_PIN, ON_VALUE);
                     break;
                 }
