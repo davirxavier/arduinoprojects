@@ -9,7 +9,9 @@
 
 class DxBuzzer {
 public:
-    DxBuzzer(uint8_t pin);
+    DxBuzzer(uint8_t pin) { init(pin, true); }
+    DxBuzzer(uint8_t pin, bool isTone) { init(pin, isTone); }
+    void init(uint8_t pin, bool isTone);
 
     void beep() { beep(700); }
     void beep(unsigned long beepDurationMs) { beep(beepDurationMs, 1, 0); }
@@ -24,6 +26,7 @@ private:
     unsigned long currentBeepDelay;
     unsigned long beepTimer;
     unsigned int currentBeepQuantity;
+    bool isTone;
 };
 
 

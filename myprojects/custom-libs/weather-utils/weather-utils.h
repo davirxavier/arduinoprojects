@@ -7,7 +7,7 @@
 
 #include <UrlEncode.h>
 #include <ArduinoJson.h>
-#include "ESP8266httpUpdate.h"
+#include <ESP8266HTTPClient.h>
 
 namespace dxweather {
     #define OPENWEATHER_URL "http://api.openweathermap.org/data/2.5/weather"

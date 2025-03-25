@@ -4,7 +4,8 @@
 
 #include "buzzer.h"
 
-DxBuzzer::DxBuzzer(uint8_t pin) : pin(pin) {
+void DxBuzzer::init(uint8_t pin, bool isTone) {
+    this->pin = pin;
     pinMode(pin, OUTPUT);
     digitalWrite(pin, LOW);
     noTone(pin);
@@ -13,6 +14,7 @@ DxBuzzer::DxBuzzer(uint8_t pin) : pin(pin) {
     currentBeepDuration = 0;
     currentBeepDelay = 0;
     isBeeping = false;
+    this->isTone = isTone;
 }
 
 void DxBuzzer::beep(unsigned long beepDurationMs, unsigned int beepQuantity, unsigned long delayBetweenBeepsMs) {
@@ -25,6 +27,10 @@ void DxBuzzer::beep(unsigned long beepDurationMs, unsigned int beepQuantity, uns
 
 void DxBuzzer::update() {
     if (currentBeepQuantity == 0) {
+        if (!isTone)
+        {
+            digitalWrite(pin, LOW);
+        }
         return;
     }
 
@@ -35,7 +41,15 @@ void DxBuzzer::update() {
         isBeeping = false;
         currentBeepQuantity--;
     } else if (!isBeeping && currentMillis - beepTimer > currentBeepDelay) {
-        tone(pin, 500, currentBeepDuration);
+        if (isTone)
+        {
+            tone(pin, 500, currentBeepDuration);
+        }
+        else
+        {
+            digitalWrite(pin, HIGH);
+        }
+
         beepTimer = currentMillis-1;
         isBeeping = true;
     }
@@ -47,5 +61,13 @@ void DxBuzzer::stop() {
     currentBeepQuantity = 0;
     currentBeepDuration = 0;
     currentBeepDelay = 0;
-    noTone(pin);
+
+    if (isTone)
+    {
+        noTone(pin);
+    }
+    else
+    {
+        digitalWrite(pin, LOW);
+    }
 }
