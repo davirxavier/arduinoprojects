@@ -20,13 +20,13 @@
 #define TEMP_READING_DELAY 1000
 #define WEATHER_READING_DELAY 300000
 #define TEMP_SENSOR_PULLUP 220000
-#define TEMP_SENSOR_PULLDOWN 46000
+#define TEMP_SENSOR_PULLDOWN 46500
 #define DEGREES_UPPER_LIMIT 0.85
 #define DEGREES_LOWER_LIMIT 1.35
 #define MIN_TEMP 18
 #define MAX_TEMP 32
 
-#define ENABLE_LOG
+// #define ENABLE_LOG
 #ifdef ENABLE_LOG
 #define LOG(str) webserial.print(str)
 #define LOGN(str) webserial.println(str)
@@ -66,7 +66,7 @@ bool sinricEnabled = true;
 Data currentData;
 unsigned long compressorTimeout = 0;
 float tempReadings[TEMP_READINGS];
-uint8_t currentTempReading = TEMP_READINGS-1;
+uint8_t currentTempReading = 0;
 unsigned long tempTimer = 0;
 unsigned long compressorSwitchDelay = 4 * 60 * 1000;
 
@@ -121,6 +121,33 @@ void enableSinric(bool enabled)
         file.write('w');
         file.close();
     }
+}
+
+void updateCurrentTemp(float newTemp)
+{
+    if (!sinricEnabled)
+    {
+        return;
+    }
+
+    currentData.currentTemperature = newTemp;
+    LOGF("Get new current temperature: %f.\n", currentData.currentTemperature);
+
+    float humidity = 0;
+    if (SinricPro.isConnected() &&
+        strlen(weatherApiKey->value) > 0 &&
+        strlen(weatherLat->value) > 0 &&
+        strlen(weatherLon->value) > 0)
+    {
+        dxweather::WeatherInfo weatherInfo;
+        dxweather::getWeatherInfo(weatherApiKey->value, weatherLat->value, weatherLon->value, weatherInfo);
+        humidity = weatherInfo.hasError ? 0 : weatherInfo.humidity;
+
+        LOGF("Get weather humidity: %f\n", weatherInfo.humidity);
+    }
+
+    SinricACWithTemp &ac = SinricPro[sinricDeviceId->value];
+    ac.sendTemperatureEvent(currentData.currentTemperature, humidity);
 }
 
 void updateTargetTemp(float &newTargetTemp)
@@ -278,8 +305,6 @@ void setup()
     ESP_CONFIG_PAGE::setAPConfig("ESP-AC-01", "admin1234");
     ESP_CONFIG_PAGE::tryConnectWifi(false, 10000);
 
-    ESP_CONFIG_PAGE::setSerial(&webserial);
-
     ESP_CONFIG_PAGE::addEnvVar(usernameVar);
     ESP_CONFIG_PAGE::addEnvVar(passVar);
     ESP_CONFIG_PAGE::addEnvVar(sinricAppKey);
@@ -315,6 +340,7 @@ void setup()
 
 #ifdef ENABLE_LOG
     ESP_CONFIG_PAGE_LOGGING::enableLogging(usernameVar->value, passVar->value, webserial);
+    ESP_CONFIG_PAGE::setSerial(&webserial);
 #endif
 
     if (turnOnDelayTime->value != nullptr && strlen(turnOnDelayTime->value) > 0)
@@ -325,11 +351,6 @@ void setup()
     ir.enableIRIn();
 
     sinricEnabled = isSinricEnabled();
-
-    for (float &tempReading : tempReadings)
-    {
-        tempReading = 0;
-    }
 
     digitalWrite(BUZZER_PIN, HIGH);
     delay(300);
@@ -366,6 +387,8 @@ void loop()
         ac.sendPowerStateEvent(false);
         ac.sendRangeValueEvent(1);
         ac.sendTargetTemperatureEvent(currentData.userTemperature);
+
+        updateCurrentTemp(readTemp(TEMP_SENSOR_PULLUP, TEMP_SENSOR_PULLDOWN));
     }
 
     if (!remoteResumed && millis()-remoteTimeout > 200) {
@@ -429,24 +452,8 @@ void loop()
             {
                 average += tempReading;
             }
-            currentData.currentTemperature = average / TEMP_READINGS;
-            LOGF("Get average temperature: %f.\n", currentData.currentTemperature);
-
-            float humidity = 0;
-            if (SinricPro.isConnected() &&
-                strlen(weatherApiKey->value) > 0 &&
-                strlen(weatherLat->value) > 0 &&
-                strlen(weatherLon->value) > 0)
-            {
-                dxweather::WeatherInfo weatherInfo;
-                dxweather::getWeatherInfo(weatherApiKey->value, weatherLat->value, weatherLon->value, weatherInfo);
-                humidity = weatherInfo.hasError ? 0 : weatherInfo.humidity;
-
-                LOGF("Get weather humidity: %f\n", weatherInfo.humidity);
-            }
-
-            SinricACWithTemp &ac = SinricPro[sinricDeviceId->value];
-            ac.sendTemperatureEvent(currentData.currentTemperature, humidity);
+            average = average / TEMP_READINGS;
+            updateCurrentTemp(average);
         }
 
         tempTimer = millis();
