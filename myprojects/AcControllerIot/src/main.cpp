@@ -278,6 +278,8 @@ void setup()
     ESP_CONFIG_PAGE::setAPConfig("ESP-AC-01", "admin1234");
     ESP_CONFIG_PAGE::tryConnectWifi(false, 10000);
 
+    ESP_CONFIG_PAGE::setSerial(&webserial);
+
     ESP_CONFIG_PAGE::addEnvVar(usernameVar);
     ESP_CONFIG_PAGE::addEnvVar(passVar);
     ESP_CONFIG_PAGE::addEnvVar(sinricAppKey);
