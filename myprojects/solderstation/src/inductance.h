@@ -12,8 +12,7 @@ namespace Inductance {
     uint8_t _signalPin;
     uint8_t _inputPin;
     double pulse;
-    double _capacitance = 10.E-6;
-    double correctionFactor = 2.62;
+    double _capacitance = 0.0000000022;
 
     /**
      * @param signalPin Pin to send signal
@@ -41,7 +40,6 @@ namespace Inductance {
             frequency = 1.E6/(2*pulse);
             inductance = 1./(_capacitance*frequency*frequency*4.*3.14159*3.14159);
             inductance *= 1E6;
-            inductance *= correctionFactor;
         } else {
             inductance = -1;
             frequency = -1;

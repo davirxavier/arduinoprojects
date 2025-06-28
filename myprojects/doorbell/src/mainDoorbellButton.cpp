@@ -1,67 +1,185 @@
 #include <Arduino.h>
+#include <FastBot.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
-#include <espnow.h>
-#include <secrets.h>
+#include <esp-config-page.h>
+#include <WebSocketsClient.h>
 
 #define BUTTON_PIN 13
 
-#define AP_NAME "DOORBELL0842"
-#define AP_PASSWORD "admin13246"
-
-WiFiClient wifiClient;
-uint8_t data[] = {1};
+volatile bool shouldRing = false;
+bool ringing = false;
+unsigned long ringTimer = 0;
+bool isOn = true;
+unsigned long lastRing = 0;
+unsigned long lastMessageSent = 0;
 
 ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
+FastBot bot;
 
-bool hasSignal;
-unsigned long lastSentMessage = 0;
-unsigned long lastRang = 0;
+auto usernameVar = new ESP_CONFIG_PAGE::EnvVar("USERNAME", "");
+auto passwordVar = new ESP_CONFIG_PAGE::EnvVar("PASSWORD", "");
+auto chatIdVar = new ESP_CONFIG_PAGE::EnvVar("CHAT_ID", "");
+auto tokenVar = new ESP_CONFIG_PAGE::EnvVar("TOKEN", "");
+auto bellIpVar = new ESP_CONFIG_PAGE::EnvVar("BELL_IP", "");
 
-void IRAM_ATTR button_interrupt()
+bool botStarted = false;
+
+WebSocketsClient webSocket;
+
+namespace Commands
 {
-    hasSignal = true;
+    enum Commands
+    {
+        TURN_ON,
+        TURN_OFF,
+        RING,
+        NONE,
+    };
+
+    inline uint8_t commandCount = 4;
+
+    inline char commandTextById[4][32] = {
+        "ligar",
+        "desligar",
+        "tocar",
+        "",
+    };
+
+    inline Commands parseCommand(String &str)
+    {
+        int firstSpace = str.indexOf(' ');
+        if (firstSpace < 0 || firstSpace+2 > str.length())
+        {
+            return NONE;
+        }
+
+        str.toLowerCase();
+
+        for (size_t i = 0; i < commandCount-1; i++)
+        {
+            if (strcmp(str.c_str()+firstSpace+1, commandTextById[i]) == 0)
+            {
+                return static_cast<Commands>(i);
+            }
+        }
+
+        return NONE;
+    }
+}
+
+void handleMessage(FB_msg &msg)
+{
+    Commands::Commands command = Commands::parseCommand(msg.text);
+
+    switch (command)
+    {
+        case (Commands::TURN_ON):
+            {
+                isOn = true;
+                bot.replyMessage("Campainha ligada.", msg.messageID, chatIdVar->value);
+                break;
+            }
+        case (Commands::TURN_OFF):
+            {
+                isOn = false;
+                bot.replyMessage("Campainha desligada.", msg.messageID, chatIdVar->value);
+                break;
+            }
+        case (Commands::RING):
+            {
+                shouldRing = true;
+                break;
+            }
+    default: break;
+    }
 }
 
 void setup() {
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+    Serial.begin(115200);
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    delay(200);
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-    httpUpdater.setup(&httpServer);
+    ESP_CONFIG_PAGE::setAPConfig("ESP-BELLBTN1", "");
+    ESP_CONFIG_PAGE::tryConnectWifi(false, 20000);
 
-    httpServer.on("/test", HTTP_GET, []()
-    {
-        esp_now_send(peerMac, data, 1);
-    });
+    ESP_CONFIG_PAGE::addEnvVar(usernameVar);
+    ESP_CONFIG_PAGE::addEnvVar(passwordVar);
+    ESP_CONFIG_PAGE::addEnvVar(chatIdVar);
+    ESP_CONFIG_PAGE::addEnvVar(tokenVar);
+    ESP_CONFIG_PAGE::addEnvVar(bellIpVar);
+    ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("/envfinal.txt"));
+
+    ESP_CONFIG_PAGE::initModules(&httpServer, usernameVar->value, passwordVar->value, "ESP-BELLBTN1");
     httpServer.begin();
 
-    if (esp_now_init() != 0) {
-        Serial.println("Error initializing ESP-NOW");
-        return;
+    if (bellIpVar->value != nullptr && strlen(bellIpVar->value) > 0)
+    {
+        webSocket.begin(bellIpVar->value, 3333);
+        webSocket.setReconnectInterval(1000);
+        webSocket.enableHeartbeat(5000, 15000, 30000);
     }
-
-    esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
 }
 
 void loop() {
-    httpServer.handleClient();
-
-    if (digitalRead(BUTTON_PIN) == LOW) {
-        hasSignal = true;
+    if (!botStarted && ESP_CONFIG_PAGE::isWiFiReady())
+    {
+        bot.skipUpdates();
+        bot.setToken(tokenVar->value);
+        bot.attach(handleMessage);
+        bot.sendMessage("A campainha está online.", chatIdVar->value);
+        botStarted = true;
     }
 
-    if (hasSignal && millis() - lastRang > 250) {
-        if (millis() - lastSentMessage > 3000) {
-            esp_now_send(peerMac, data, 1);
-            lastSentMessage = millis();
+    if (botStarted)
+    {
+        bot.tick();
+    }
+
+    ESP_CONFIG_PAGE::loop();
+    httpServer.handleClient();
+    webSocket.loop();
+
+    if (!isOn)
+    {
+        shouldRing = false;
+    }
+
+    if (!ringing && shouldRing && isOn && millis() - lastRing > 1500)
+    {
+        ringing = true;
+
+        if (webSocket.isConnected())
+        {
+            char buf[strlen(usernameVar->value)+strlen(passwordVar->value)+8];
+            buf[0] = 0;
+            sprintf(buf, "r:%s:%s", usernameVar->value, passwordVar->value);
+            webSocket.sendTXT(buf);
+        }
+        else
+        {
+            Serial.println("Websocket is not connected.");
         }
 
-        lastRang = millis();
-        hasSignal = false;
+        if (millis() - lastMessageSent > 3000)
+        {
+            bot.sendMessage("A campainha está tocando.", chatIdVar->value);
+            lastMessageSent = millis();
+        }
+
+        shouldRing = false;
+        ringTimer = millis();
+        lastRing = millis();
+    }
+
+    if (ringing && millis() - ringTimer > 2000)
+    {
+        ringing = false;
+    }
+
+    if (digitalRead(BUTTON_PIN) == LOW)
+    {
+        shouldRing = true;
     }
 }

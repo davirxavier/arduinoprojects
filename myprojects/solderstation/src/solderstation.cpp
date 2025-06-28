@@ -2,7 +2,7 @@
 #include "Wire.h"
 #include "LiquidCrystal_I2C.h"
 #include <IRremote.hpp>
-#include "max6675.h"
+#include "MAX6675.h"
 #include "EEPROM.h"
 #include "inductance.h"
 
@@ -95,7 +95,7 @@ namespace States {
 
 void reset() { asm volatile ("jmp 0x7800"); }
 
-MAX6675 tempSensor(SENSOR_CLK, SENSOR_CS, SENSOR_MISO);
+MAX6675 tempSensor(SENSOR_CS, SENSOR_MISO, SENSOR_CLK);
 LiquidCrystal_I2C display(LCD_ADDRESS, 16, 2);
 char displayBuffer[17];
 Config *currentConfig;
@@ -456,7 +456,7 @@ void setup() {
 
 void loop() {
     if (isOn && millis() - tempUpdateTimer > 2000) {
-        currentTemp = tempSensor.readCelsius();
+        currentTemp = tempSensor.getCelsius();
         updateStates(States::TEMP, currentTemp);
 
         if (currentAltMode == States::LC_METER_MODE) {

@@ -1,105 +1,93 @@
 #include <Arduino.h>
-#include <FastBot.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266HTTPUpdateServer.h>
-#include <espnow.h>
-#include <secrets.h>
-#include <shared.h>
+#include <esp-config-page.h>
+
+#define RING_PIN 2
 
 volatile bool shouldRing = false;
 bool ringing = false;
 unsigned long ringTimer = 0;
-bool isOn = true;
 
 ESP8266WebServer httpServer(80);
-ESP8266HTTPUpdateServer httpUpdater;
-FastBot bot;
+WebSocketsServer socketServer(3333);
 
-int32_t getWiFiChannel(const char *ssid) {
-    if (int32_t n = WiFi.scanNetworks()) {
-        for (uint8_t i=0; i<n; i++) {
-            if (!strcmp(ssid, WiFi.SSID(i).c_str())) {
-                return WiFi.channel(i);
-            }
-        }
-    }
-    return 0;
-}
+auto usernameVar = new ESP_CONFIG_PAGE::EnvVar("USERNAME", "");
+auto passwordVar = new ESP_CONFIG_PAGE::EnvVar("PASSWORD", "");
 
-void handleMessage(FB_msg &msg)
-{
-    Commands::Commands command = Commands::parseCommand(msg.text);
-
-    switch (command)
-    {
-        case (Commands::TURN_ON):
-            {
-                isOn = true;
-                bot.replyMessage("Campainha ligada.", msg.messageID, CHAT_ID);
-                break;
-            }
-        case (Commands::TURN_OFF):
-            {
-                isOn = false;
-                bot.replyMessage("Campainha desligada.", msg.messageID, CHAT_ID);
-                break;
-            }
-        case (Commands::RING):
-            {
-                shouldRing = true;
-                break;
-            }
-    default: break;
-    }
-}
+bool useBot = false;
 
 void setup() {
+    Serial.begin(115200);
     pinMode(RING_PIN, OUTPUT);
-
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-        WiFi.begin(WIFI_SSID, WIFI_PASS);
-    }
-
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-    httpUpdater.setup(&httpServer);
-    httpServer.begin();
+    ESP_CONFIG_PAGE::setAPConfig("ESP-BELLBELL1", "");
+    ESP_CONFIG_PAGE::tryConnectWifi(false, 15000);
 
-    uint8_t wifiChannel = getWiFiChannel(WIFI_SSID);
-    if (wifiChannel == 0)
-    {
-        ESP.restart();
-        return;
-    }
+    ESP_CONFIG_PAGE::addEnvVar(usernameVar);
+    ESP_CONFIG_PAGE::addEnvVar(passwordVar);
+    ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("/envfinal.txt"));
 
-    bot.skipUpdates();
-    bot.setToken(TOKEN);
-    bot.attach(handleMessage);
-    bot.sendMessage("A campainha está online.", CHAT_ID);
-
-    if (esp_now_init() != 0) {
-        return;
-    }
-
-    esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
-    esp_now_add_peer(peerMac, ESP_NOW_ROLE_SLAVE, wifiChannel, NULL, 0);
-    esp_now_register_recv_cb([](u8 *mac_addr, u8 *data, u8 len)
+    ESP_CONFIG_PAGE::addCustomAction("RING", [](ESP_CONFIG_PAGE::WEBSERVER_T& server)
     {
         shouldRing = true;
     });
+
+    ESP_CONFIG_PAGE::initModules(&httpServer, usernameVar->value, passwordVar->value, "ESP-BELLBELL1");
+
+    httpServer.on("/ring", []()
+    {
+        const char *body = httpServer.arg("plain").c_str();
+        char buf[strlen(usernameVar->value)+strlen(passwordVar->value) + 4];
+        sprintf(buf, "%s:%s", usernameVar->value, passwordVar->value);
+
+        if (strcmp(buf, body) == 0)
+        {
+            shouldRing = true;
+            httpServer.send(200);
+        }
+        else
+        {
+            httpServer.send(401);
+        }
+    });
+
+    httpServer.begin();
+
+    socketServer.onEvent([](uint8_t client, WStype_t type, uint8_t* payload, size_t length)
+    {
+        if (type == WStype_TEXT)
+        {
+            char* text = reinterpret_cast<char*>(payload);
+
+            size_t textLength = strlen(text);
+            if (textLength > 999)
+            {
+                return;
+            }
+
+            char buf[strlen(usernameVar->value) + strlen(passwordVar->value) + 8];
+            buf[0] = 0;
+            sprintf(buf, "r:%s:%s", usernameVar->value, passwordVar->value);
+
+            if (strcmp(buf, text) == 0)
+            {
+                shouldRing = true;
+            }
+        }
+    });
+    socketServer.begin();
 }
 
 void loop() {
-    bot.tick();
+    ESP_CONFIG_PAGE::loop();
     httpServer.handleClient();
+    socketServer.loop();
 
-    if (shouldRing && isOn)
+    if (shouldRing)
     {
-        bot.sendMessage("A campainha está tocando.", CHAT_ID);
         shouldRing = false;
-
         ringing = true;
         ringTimer = millis();
         digitalWrite(RING_PIN, HIGH);

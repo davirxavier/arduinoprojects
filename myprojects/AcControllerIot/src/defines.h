@@ -5,9 +5,9 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
-// 12.63ºC = 11120.61 ohms
-// 63.13ºC = 1799.61 ohms
-// 25.5ºC = 7148.04 ohms
+// 12.63ºC = 14616.09046 ohms
+// 63.13ºC = 1872.06118 ohms
+// 25.5ºC = 8460 ohms
 // beta = 3910.85K
 // resistance at 25ºC ~= 7113
 
