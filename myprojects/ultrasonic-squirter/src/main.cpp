@@ -15,17 +15,15 @@
 #define TRIGGER_PIN 8
 #define ECHO_PIN 7
 #define PUMP_PIN 1
-#define PING_DELAY_MS 100
-#define PING_READINGS 10
-#define SUCCESSIVE_SQUIRTS_TIME 10000
-#define MAX_SUCCESSIVE_SQUIRTS 10
-#define SQUIRT_TIMEOUT 120000
-#define MAX_PUMP_ON_TIME 250
+#define PING_DELAY_MS 30
+#define PING_READINGS 30
+#define PING_IGNORE_OUTLIERS 7
+#define MAX_PUMP_ON_TIME 200
 #define MIN_PUMP_ON_TIME 100
 
-#define MIN_WATER_LEVEL_PF 50
-#define MAX_WATER_LEVEL_PF 410
-#define WATER_LEVEL_READING_INTERVAL 1000
+#define MIN_WATER_LEVEL_PF 90
+#define MAX_WATER_LEVEL_PF 175
+#define WATER_LEVEL_READING_INTERVAL 60000
 #define WATER_LEVEL_READINGS 20
 
 #define EMBER_BOARD_ID 0
@@ -152,6 +150,15 @@ int getPumpPower(unsigned long distanceCm)
     return constrain(map(map(distanceCm, 20, triggerDistanceCm, minPower, maxPower), 0, 100, 10, 255), 10, 255);
 }
 
+int compareULong(const void* a, const void* b) {
+    unsigned long valA = *(unsigned long*)a;
+    unsigned long valB = *(unsigned long*)b;
+
+    if (valA < valB) return -1;
+    if (valA > valB) return 1;
+    return 0;
+}
+
 void setup()
 {
 #ifdef ENABLE_LOGGING
@@ -207,19 +214,6 @@ void setup()
 
 void loop()
 {
-    if (millis() - successiveSquirtResetTimer > SUCCESSIVE_SQUIRTS_TIME)
-    {
-        successiveSquirtCount = 0;
-        successiveSquirtResetTimer = millis();
-    }
-
-    if (successiveSquirtCount >= MAX_SUCCESSIVE_SQUIRTS)
-    {
-        squirtTimeout = millis();
-        successiveSquirtCount = 0;
-        successiveSquirtResetTimer = millis();
-    }
-
     if (hasSquirt && millis() - pumpTimer > pumpOnTime)
     {
         ledcWrite(PUMP_PIN, 0);
@@ -279,36 +273,41 @@ void loop()
         return;
     }
 
-    if (millis() - lastPing > PING_DELAY_MS && millis() - squirtTimeout > SQUIRT_TIMEOUT) {
+    if (millis() - lastPing > PING_DELAY_MS) {
+        portENTER_CRITICAL(&capacitanceSpinlock);
         unsigned long ping = sonar.ping_cm();
+        portEXIT_CRITICAL(&capacitanceSpinlock);
 
         pingReadings[currentReading] = ping;
         currentReading++;
 
         if (currentReading >= PING_READINGS)
         {
+            qsort(pingReadings, PING_READINGS, sizeof(unsigned long), compareULong);
+
             unsigned long average = 0;
-            for (unsigned long p : pingReadings)
+            for (size_t i = PING_IGNORE_OUTLIERS; i < PING_READINGS-PING_IGNORE_OUTLIERS; i++)
             {
-                average = average + p;
+                average = average + pingReadings[i];
             }
-            average = average / PING_READINGS;
+            average = average / (PING_READINGS-(PING_IGNORE_OUTLIERS*2));
 
             LOG("Average: ");
             LOG(average);
             LOGN("cm");
 
-            if (average == 0)
-            {
-                LOGN("Error reading distance.");
-                if (currentStatus != SQUIRT_SCAN_ERROR)
-                {
-                    currentStatus = SQUIRT_SCAN_ERROR;
-                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
-                    emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
-                }
-            }
-            else if (average < triggerDistanceCm) {
+            // if (average == 0)
+            // {
+            //     LOGN("Error reading distance.");
+            //     if (currentStatus != SQUIRT_SCAN_ERROR)
+            //     {
+            //         currentStatus = SQUIRT_SCAN_ERROR;
+            //         ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
+            //         emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
+            //     }
+            // }
+            // else
+            if (average < triggerDistanceCm) {
                 LOGN("Squirt set.");
                 ledcWrite(PUMP_PIN, getPumpPower(average));
 

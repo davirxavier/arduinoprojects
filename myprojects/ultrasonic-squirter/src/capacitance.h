@@ -7,6 +7,8 @@
 
 #include <Arduino.h>
 
+static portMUX_TYPE capacitanceSpinlock = portMUX_INITIALIZER_UNLOCKED;
+
 inline void initCapacitance(uint8_t charge_pin, uint8_t sense_pin)
 {
     pinMode(sense_pin, INPUT);
@@ -28,6 +30,7 @@ inline double measureCapacitancePF(
     const byte discharge_time_ms = 40;
     unsigned long charged_val = 0;
 
+    portENTER_CRITICAL(&capacitanceSpinlock);
     for (int i = 0; i < num_measurements; i++)
     {
         digitalWrite(charge_pin, HIGH);
@@ -37,6 +40,7 @@ inline double measureCapacitancePF(
         digitalWrite(charge_pin, LOW);
         delay(discharge_time_ms);
     }
+    portEXIT_CRITICAL(&capacitanceSpinlock);
 
     charged_val /= num_measurements;
 
