@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "author": "Xav",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-nano", "id": "nano", "top": 24, "left": -10.1, "attrs": {} },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": -204.8,
+      "left": 197.6,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-ir-receiver",
+      "id": "ir1",
+      "top": -20.45,
+      "left": 180.78,
+      "rotate": 180,
+      "attrs": {}
+    },
+    { "type": "wokwi-ir-remote", "id": "remote1", "top": 163.2, "left": 172.8, "attrs": {} },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 139.2,
+      "left": 9.05,
+      "rotate": 90,
+      "attrs": { "value": "1000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 139.2,
+      "left": 76.25,
+      "rotate": 90,
+      "attrs": { "value": "972000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 235.2,
+      "left": 47.45,
+      "rotate": 90,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn1",
+      "top": 113,
+      "left": -19.2,
+      "attrs": { "color": "green", "xray": "1" }
+    }
+  ],
+  "connections": [
+    [ "lcd1:GND", "nano:GND.2", "black", [ "h0" ] ],
+    [ "lcd1:VCC", "nano:5V", "red", [ "h0" ] ],
+    [ "lcd1:SDA", "nano:A4", "green", [ "h0" ] ],
+    [ "lcd1:SCL", "nano:A5", "green", [ "h0" ] ],
+    [ "ir1:GND", "nano:GND.1", "black", [ "v0" ] ],
+    [ "ir1:VCC", "nano:5V", "red", [ "v0" ] ],
+    [ "ir1:DAT", "nano:11", "green", [ "v-19.2", "h-220.8" ] ],
+    [ "r1:1", "nano:6", "green", [ "h0" ] ],
+    [ "r2:1", "nano:2", "green", [ "h0" ] ],
+    [ "r3:1", "r1:2", "green", [ "h0" ] ],
+    [ "r1:2", "r2:2", "green", [ "h0" ] ],
+    [ "r3:2", "nano:3", "green", [ "h0" ] ],
+    [ "nano:A3", "r1:2", "green", [ "v0" ] ],
+    [ "btn1:1.r", "nano:A0", "green", [ "v0" ] ],
+    [ "btn1:2.l", "nano:GND.1", "green", [ "h0" ] ]
+  ],
+  "dependencies": {}
+}

@@ -1,0 +1,4 @@
+[wokwi]
+version = 1
+firmware = '.pio/build/promini5v/firmware.hex'
+elf = '.pio/build/promini5v/firmware.elf'
