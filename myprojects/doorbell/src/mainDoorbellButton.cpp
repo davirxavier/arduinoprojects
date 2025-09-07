@@ -1,18 +1,20 @@
 #include <Arduino.h>
+
+// #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #include <esp-config-page.h>
 #include <WebSocketsClient.h>
 #include <secrets.h>
 #include <telegram-requests.h>
 #include "esp_http_client.h"
 
-#define BUTTON_PIN 2
+#define BUTTON_PIN 3
 #define SNAPSHOT_INTERVAL 15000
 
 bool botStarted = false;
 volatile bool shouldRing = false;
 bool ringing = false;
 unsigned long ringTimer = 0;
-bool isOn = true;
 unsigned long lastRing = 0;
 unsigned long lastMessageSent = 0;
 unsigned long lastPrintSent = 0 - 15000;
@@ -48,7 +50,7 @@ void sendCamPhoto()
     telegramOperationCounter = millis();
 
     esp_err_t status = esp_http_client_perform(snapClient);
-    TelegramRequest::telegramEnd(status == ESP_OK);
+    TelegramRequest::telegramEnd();//status == ESP_OK);
     if (status != ESP_OK)
     {
         ESP_LOGI("TELEGRAM", "Error trying to download snap.");
@@ -125,7 +127,7 @@ void setup() {
 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-    ESP_CONFIG_PAGE::setAPConfig("ESP32-BELLBTN", "");
+    ESP_CONFIG_PAGE::setAPConfig("ESP32-BELLBTN", "adminadmin");
     ESP_CONFIG_PAGE::tryConnectWifi(false, 20000);
 
     ESP_CONFIG_PAGE::addEnvVar(usernameVar);
@@ -148,7 +150,7 @@ void setup() {
         sendCamPhoto();
     });
 
-    ESP_CONFIG_PAGE::initModules(&httpServer, usernameVar->value, passwordVar->value, "ESP-BELLBTN1");
+    ESP_CONFIG_PAGE::initModules(&httpServer, usernameVar->value, passwordVar->value, "ESP32-BELLBTN2");
     httpServer.begin();
     initClients();
 
@@ -171,12 +173,7 @@ void loop() {
     httpServer.handleClient();
     webSocket.loop();
 
-    if (!isOn)
-    {
-        shouldRing = false;
-    }
-
-    if (!ringing && shouldRing && isOn && millis() - lastRing > 1500)
+    if (!ringing && shouldRing && millis() - lastRing > 1500)
     {
         ringing = true;
 
@@ -194,7 +191,7 @@ void loop() {
 
         if (millis() - lastMessageSent > 3000)
         {
-            TelegramRequest::telegramSendMessage("A campainha está tocando.", tokenVar->value, chatIdVar->value, true);
+            TelegramRequest::telegramSendMessage("A campainha está tocando.", tokenVar->value, chatIdVar->value);
             lastMessageSent = millis();
         }
 

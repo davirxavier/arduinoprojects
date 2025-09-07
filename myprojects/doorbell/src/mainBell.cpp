@@ -21,7 +21,6 @@ bool useBot = false;
 void setup() {
     Serial.begin(115200);
     pinMode(RING_PIN, OUTPUT);
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
     ESP_CONFIG_PAGE::setAPConfig("ESP-BELLBELL1", "");
     ESP_CONFIG_PAGE::tryConnectWifi(false, 15000);
