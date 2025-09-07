@@ -1,2 +1,5 @@
 .pio
-real_secrets.h
+managed_components
+dependencies.lock
+sdkconfig.outdoor_button
+sdkconfig.outdoor_button.old
