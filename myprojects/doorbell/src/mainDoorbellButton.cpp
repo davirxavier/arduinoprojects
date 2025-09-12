@@ -5,8 +5,10 @@
 #include <esp-config-page.h>
 #include <WebSocketsClient.h>
 #include <secrets.h>
-#include <telegram-requests.h>
-#include "esp_http_client.h"
+
+// #define TELEGRAM_ENABLE_LOGGING
+// #define TELEGRAM_LOG_DEBUG
+#include <telegram-requests-idf.h>
 
 #define BUTTON_PIN 3
 #define SNAPSHOT_INTERVAL 15000
@@ -46,23 +48,28 @@ void sendCamPhoto()
         return;
     }
 
-    ESP_LOGI("SNAP", "Starting snap download.");
-    telegramOperationCounter = millis();
+    if (!hasValue(tokenVar) || !hasValue(chatIdVar))
+    {
+        ESP_LOGI("SNAP", "Telegram values not set.");
+        return;
+    }
 
+    ESP_LOGI("SNAP", "Starting snap download.");
     esp_err_t status = esp_http_client_perform(snapClient);
-    TelegramRequest::telegramEnd();//status == ESP_OK);
     if (status != ESP_OK)
     {
         ESP_LOGI("TELEGRAM", "Error trying to download snap.");
         esp_http_client_close(snapClient);
-        return;
     }
-    ESP_LOGI("SNAP", "Snap total time taken: %lu", millis() - telegramOperationCounter);
 }
 
 void initClients()
 {
-    TelegramRequest::initClient();
+    if (hasValue(tokenVar) && hasValue(chatIdVar))
+    {
+        TelegramRequests::init(tokenVar->value, chatIdVar->value);
+    }
+
     if (!hasValue(cameraUrlVar))
     {
         return;
@@ -85,28 +92,31 @@ void initClients()
                     if (!telegramStarted)
                     {
                         int64_t length = esp_http_client_get_content_length(e->client);
-                        telegramStarted = TelegramRequest::telegramStartSending(
-                            tokenVar->value,
+                        int status = TelegramRequests::telegramStartTransaction(
+                            TelegramConsts::PHOTO,
                             chatIdVar->value,
-                            TelegramRequest::PHOTO,
                             "fotocam.jpeg",
                             length);
+                        telegramStarted = status == TelegramConsts::OK;
 
                         if (!telegramStarted)
                         {
+                            ESP_LOGI("TELEGRAM", "Error starting telegram transaction: %d", status);
                             lastPrintSent = millis() - SNAPSHOT_INTERVAL;
                             return ESP_FAIL;
                         }
                     }
 
-                    TelegramRequest::telegramSendData((char*) e->data, e->data_len);
+                    TelegramRequests::telegramWriteData((uint8_t*) e->data, e->data_len);
                     break;
                 }
             case HTTP_EVENT_ERROR:
             case HTTP_EVENT_ON_FINISH:
+            case HTTP_EVENT_DISCONNECTED:
                 {
                     if (telegramStarted)
                     {
+                        TelegramRequests::telegramEndTransaction();
                         telegramStarted = false;
                     }
                     break;
@@ -165,7 +175,7 @@ void setup() {
 void loop() {
     if (!botStarted && ESP_CONFIG_PAGE::isWiFiReady())
     {
-        TelegramRequest::telegramSendMessage("A campainha está online.", tokenVar->value, chatIdVar->value);
+        TelegramRequests::sendMessage("A campainha está online.", chatIdVar->value);
         botStarted = true;
     }
 
@@ -191,7 +201,7 @@ void loop() {
 
         if (millis() - lastMessageSent > 3000)
         {
-            TelegramRequest::telegramSendMessage("A campainha está tocando.", tokenVar->value, chatIdVar->value);
+            TelegramRequests::sendMessage("A campainha está tocando.", chatIdVar->value);
             lastMessageSent = millis();
         }
 
