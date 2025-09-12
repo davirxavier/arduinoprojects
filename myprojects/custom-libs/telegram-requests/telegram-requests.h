@@ -1,8 +1,31 @@
-#pragma once
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
+#ifndef TELEGRAM_REQUESTS_CONSTS_H
+#define TELEGRAM_REQUESTS_CONSTS_H
 
-namespace TelegramRequest
+// #define TELEGRAM_BOT_INSECURE
+#ifdef TELEGRAM_BOT_INSECURE
+#warning "Telegram bot is in insecure mode, no data encryption will be used!"
+#endif
+
+// #define TELEGRAM_ENABLE_LOGGING
+// #define TELEGRAM_LOG_DEBUG
+
+#ifdef TELEGRAM_ENABLE_LOGGING
+#define TEL_LOG(s) Serial.print(s)
+#define TEL_LOGN(s) Serial.print("[TELEGRAM-BOT] "); Serial.println(s)
+#define TEL_LOGF(s, p...) Serial.print("[TELEGRAM-BOT] "); Serial.printf(s, p)
+#else
+#define TEL_LOG(s)
+#define TEL_LOGN(s)
+#define TEL_LOGF(s, p...)
+#endif
+
+#ifdef TELEGRAM_LOG_DEBUG
+#define TEL_PRINT_BOTH(s) client.print(s); TEL_LOG(s)
+#else
+#define TEL_PRINT_BOTH(s) client.print(s)
+#endif
+
+namespace TelegramConsts
 {
     enum TelegramRequestType
     {
@@ -15,168 +38,108 @@ namespace TelegramRequest
     constexpr char requestPathByType[requestCount][20] = {"sendMessage", "sendPhoto"};
     constexpr char requestFieldByType[requestCount][20] = {"text", "photo"};
 
-    inline esp_http_client_handle_t telegramClient;
-    constexpr char multipartBoundary[] = "ESP_BELL_BTN";
-    constexpr char multipartContentTypeHeader[] = "multipart/form-data; boundary=ESP_BELL_BTN";
-
-    constexpr char telegramHost[] = "api.telegram.org";
-    inline char telegramUrl[256] = "https://api.telegram.org";
-
-    inline bool isFileRequest(TelegramRequestType t)
+    enum TelegramStatus
     {
-        return t != MESSAGE;
-    }
+        OK,
+        NO_TOKEN,
+        NO_CHAT_ID,
+        CONNECTION_FAILED,
+        UNKNOWN_TYPE,
+        NO_WRITE_CALLBACK_DEFINED,
+        NOT_CONNECTED,
+        WRITE_ERROR,
+        KEEP_ALIVE,
+        CONNECT_RETRY,
+    };
 
-    inline void initClient(int rxBufferSize = 512, int txBufferSize = 4096)
-    {
-        esp_http_client_config_t telegramConfig = {
-            .url = telegramUrl,
-            .method = HTTP_METHOD_POST,
-            .timeout_ms = 10000,
-            .buffer_size = rxBufferSize,
-            .buffer_size_tx = txBufferSize,
-            .crt_bundle_attach = esp_crt_bundle_attach,
-            .keep_alive_enable = true,
-        };
-        telegramClient = esp_http_client_init(&telegramConfig);
-        esp_http_client_set_header(telegramClient, "Content-Type", multipartContentTypeHeader);
-    }
+    constexpr char host[] = "api.telegram.org";
+    constexpr char multipartBoundary[] = "ESP_TELEGRAM";
+    constexpr char multipartContentTypeHeader[] = "multipart/form-data; boundary=ESP_TELEGRAM";
 
-    inline bool telegramStartSending(
-        const char *token,
-        const char *chatId,
-        const TelegramRequest::TelegramRequestType type,
-        const char* data,
-        const size_t dataSize = 0)
-    {
-        if (token == nullptr || strlen(token) == 0 || chatId == nullptr || strlen(chatId) == 0)
-        {
-            return false;
-        }
-
-        const char* pathName = TelegramRequest::requestPathByType[type];
-        const char* fieldName = TelegramRequest::requestFieldByType[type];
-
-        char fullDispositionHeader[256]{};
-        if (TelegramRequest::isFileRequest(type))
-        {
-            snprintf(fullDispositionHeader, sizeof(fullDispositionHeader),
-                     "--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n\r\n",
-                     multipartBoundary,
-                     fieldName,
-                     data);
-        }
-        else
-        {
-            snprintf(fullDispositionHeader, sizeof(fullDispositionHeader),
-                     "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n",
-                     multipartBoundary,
-                     fieldName);
-        }
-
-        int contentLength = strlen(fullDispositionHeader) +
-            strlen(multipartBoundary) +
-            (type == TelegramRequest::MESSAGE ? strlen(data) : dataSize) +
-            6;
-
-        ESP_LOGI("TELEGRAM", "Calculated content length is: %d\n", contentLength);
-
-        snprintf(telegramUrl, sizeof(telegramUrl), "https://%s/bot%s/%s?chat_id=%s",
-            telegramHost,
-            token,
-            pathName,
-            chatId);
-        ESP_LOGI("TELEGRAM", "Telegram url: %s\n", telegramUrl);
-        esp_http_client_set_url(telegramClient, telegramUrl);
-
-        if (esp_http_client_open(telegramClient, contentLength) != ESP_OK)
-        {
-            ESP_LOGI("TELEGRAM", "Error opening connection to telegram.");
-            return false;
-        }
-
-        esp_http_client_write(telegramClient, fullDispositionHeader, strlen(fullDispositionHeader));
-        return true;
-    }
-
-    inline size_t telegramSendData(const char* data, int dataSize)
-    {
-        return esp_http_client_write(telegramClient, data, dataSize);
-    }
-
-    inline void telegramEnd(bool reuseCon = false)
-    {
-        esp_http_client_write(telegramClient, "\r\n--", 4);
-        esp_http_client_write(telegramClient, multipartBoundary, strlen(multipartBoundary));
-        esp_http_client_write(telegramClient, "--", 2);
-
-        // int64_t responseContentLength = esp_http_client_fetch_headers(telegramClient);
-        // if (responseContentLength < 0)
-        // {
-        //     ESP_LOGI("TELEGRAM", "Error fetching telegram response headers: %lld\n", responseContentLength);
-        //     esp_http_client_close(telegramClient);
-        //     return;
-        // }
-
-        // int status = esp_http_client_get_status_code(telegramClient);
-        // ESP_LOGI("TELEGRAM", "Upload to telegram finished, status: %d\n", status);
-        //
-        // if (status < 200 || status >= 300)
-        // {
-        //     ESP_LOGI("TELEGRAM", "Error uploading to telegram:");
-        //     char buf[512];
-        //     int read = esp_http_client_read(telegramClient, buf, sizeof(buf));
-        //     buf[read < sizeof(buf) ? read : sizeof(buf) - 1] = 0;
-        //     ESP_LOGI("TELEGRAM", "%s", buf);
-        // }
-
-        if (!reuseCon)
-        {
-            esp_http_client_close(telegramClient);
-        }
-    }
-
-    inline bool telegramSendMessage(const char* message, const char *token, const char *chatId, bool reuseCon = false)
-    {
-        if (!telegramStartSending(token, chatId, TelegramRequest::MESSAGE, message))
-        {
-            return false;
-        }
-
-        telegramSendData(message, strlen(message));
-        telegramEnd(reuseCon);
-        return true;
-    }
-
-#ifdef ESP_ARDUINO_VERSION
-    inline bool telegramSendFile(
-        const char *fileName,
-        Stream &file,
-        size_t fileSize,
-        TelegramRequestType fileType,
-        const char *token,
-        const char *chatId,
-        const size_t bufSize = 512)
-    {
-        if (!isFileRequest(fileType))
-        {
-            return false;
-        }
-
-        if (!telegramStartSending(token, chatId, TelegramRequest::MESSAGE, fileName, fileSize))
-        {
-            return true;
-        }
-
-        size_t readLen = 0;
-        uint8_t buf[bufSize];
-        while ((readLen = file.readBytes(buf, bufSize)) > 0)
-        {
-            telegramSendData((char*) buf, readLen);
-        }
-
-        telegramEnd();
-        return true;
-    }
+#ifndef TELEGRAM_BOT_INSECURE
+#ifdef TELEGRAM_REQUESTS_USING_ARDUINO
+    const char telegramCert[] PROGMEM = \
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIEADCCAuigAwIBAgIBADANBgkqhkiG9w0BAQUFADBjMQswCQYDVQQGEwJVUzEh\n"
+        "MB8GA1UEChMYVGhlIEdvIERhZGR5IEdyb3VwLCBJbmMuMTEwLwYDVQQLEyhHbyBE\n"
+        "YWRkeSBDbGFzcyAyIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MB4XDTA0MDYyOTE3\n"
+        "MDYyMFoXDTM0MDYyOTE3MDYyMFowYzELMAkGA1UEBhMCVVMxITAfBgNVBAoTGFRo\n"
+        "ZSBHbyBEYWRkeSBHcm91cCwgSW5jLjExMC8GA1UECxMoR28gRGFkZHkgQ2xhc3Mg\n"
+        "MiBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTCCASAwDQYJKoZIhvcNAQEBBQADggEN\n"
+        "ADCCAQgCggEBAN6d1+pXGEmhW+vXX0iG6r7d/+TvZxz0ZWizV3GgXne77ZtJ6XCA\n"
+        "PVYYYwhv2vLM0D9/AlQiVBDYsoHUwHU9S3/Hd8M+eKsaA7Ugay9qK7HFiH7Eux6w\n"
+        "wdhFJ2+qN1j3hybX2C32qRe3H3I2TqYXP2WYktsqbl2i/ojgC95/5Y0V4evLOtXi\n"
+        "EqITLdiOr18SPaAIBQi2XKVlOARFmR6jYGB0xUGlcmIbYsUfb18aQr4CUWWoriMY\n"
+        "avx4A6lNf4DD+qta/KFApMoZFv6yyO9ecw3ud72a9nmYvLEHZ6IVDd2gWMZEewo+\n"
+        "YihfukEHU1jPEX44dMX4/7VpkI+EdOqXG68CAQOjgcAwgb0wHQYDVR0OBBYEFNLE\n"
+        "sNKR1EwRcbNhyz2h/t2oatTjMIGNBgNVHSMEgYUwgYKAFNLEsNKR1EwRcbNhyz2h\n"
+        "/t2oatTjoWekZTBjMQswCQYDVQQGEwJVUzEhMB8GA1UEChMYVGhlIEdvIERhZGR5\n"
+        "IEdyb3VwLCBJbmMuMTEwLwYDVQQLEyhHbyBEYWRkeSBDbGFzcyAyIENlcnRpZmlj\n"
+        "YXRpb24gQXV0aG9yaXR5ggEAMAwGA1UdEwQFMAMBAf8wDQYJKoZIhvcNAQEFBQAD\n"
+        "ggEBADJL87LKPpH8EsahB4yOd6AzBhRckB4Y9wimPQoZ+YeAEW5p5JYXMP80kWNy\n"
+        "OO7MHAGjHZQopDH2esRU1/blMVgDoszOYtuURXO1v0XJJLXVggKtI3lpjbi2Tc7P\n"
+        "TMozI+gciKqdi0FuFskg5YmezTvacPd+mSYgFFQlq25zheabIZ0KbIIOqPjCDPoQ\n"
+        "HmyW74cNxA9hi63ugyuV+I6ShHI56yDqg+2DzZduCLzrTia2cyvk0/ZM/iZx4mER\n"
+        "dEr/VxqHD3VILs9RaRegAhJhldXRQLIQTO7ErBBDpqWeCtWVYpoNz4iCxTIM5Cuf\n"
+        "ReYNnyicsbkqWletNw+vHX/bvZ8=\n"
+        "-----END CERTIFICATE-----";
 #endif
+#endif
+
+    char *token = nullptr;
+    char *defaultChatId = nullptr;
+
+    inline void setToken(const char *newToken)
+    {
+        if (token != nullptr)
+        {
+            free(token);
+            token = nullptr;
+        }
+
+        if (newToken == nullptr)
+        {
+            return;
+        }
+
+        token = (char*) malloc(strlen(newToken)+1);
+        strcpy(token, newToken);
+    }
+
+    inline void setDefaultChatId(const char *newChatId)
+    {
+        if (defaultChatId != nullptr)
+        {
+            free(defaultChatId);
+            defaultChatId = nullptr;
+        }
+
+        if (newChatId == nullptr)
+        {
+            return;
+        }
+
+        defaultChatId = (char*) malloc(strlen(newChatId)+1);
+        strcpy(defaultChatId, newChatId);
+    }
 }
+
+namespace TelegramRequests
+{
+    void readRemaining(unsigned long timeout = 5000);
+    bool tryConnect(int contentLength);
+    TelegramConsts::TelegramStatus loop();
+    void init(const char *newToken, const char *chatId);
+    TelegramConsts::TelegramStatus telegramStartTransaction(TelegramConsts::TelegramRequestType type,
+                                                                   const char *chatId,
+                                                                   const char *data,
+                                                                   const size_t dataSize = 0);
+    size_t telegramWriteData(uint8_t *data, size_t size);
+    TelegramConsts::TelegramStatus telegramEndTransaction();
+    TelegramConsts::TelegramStatus sendMessage(const char *message, const char *chatId = nullptr);
+    void sendKeepAlive();
+    void stop();
+    bool isConnected();
+}
+
+#endif
