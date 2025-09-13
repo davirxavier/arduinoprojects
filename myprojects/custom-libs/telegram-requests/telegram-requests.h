@@ -89,6 +89,9 @@ namespace TelegramConsts
     char *token = nullptr;
     char *defaultChatId = nullptr;
 
+    /**
+     * Sets the telegram bot token. Copies the passed string to a new dynamically allocated string.
+     */
     inline void setToken(const char *newToken)
     {
         if (token != nullptr)
@@ -106,6 +109,9 @@ namespace TelegramConsts
         strcpy(token, newToken);
     }
 
+    /**
+    * Sets the default telegram chat id to send messaged to. Copies the passed string to a new dynamically allocated string.
+    */
     inline void setDefaultChatId(const char *newChatId)
     {
         if (defaultChatId != nullptr)
@@ -126,19 +132,73 @@ namespace TelegramConsts
 
 namespace TelegramRequests
 {
+    /**
+     * Reads all remaining available data in the telegram client.
+     */
     void readRemaining(unsigned long timeout = 5000);
+
+    /**
+     * Tries to connect the client to the telegram server.
+     */
     bool tryConnect(int contentLength);
+
+    /**
+     * Loop function, should be called in the main loop.
+     * @return returns what has happened in this loop instance.
+     */
     TelegramConsts::TelegramStatus loop();
+
+    /**
+     * Initializer for the module. Should be called before every send function.
+     * @param newToken bot token for auth.
+     * @param chatId default chat id to send messages.
+     */
     void init(const char *newToken, const char *chatId);
-    TelegramConsts::TelegramStatus telegramStartTransaction(TelegramConsts::TelegramRequestType type,
-                                                                   const char *chatId,
-                                                                   const char *data,
-                                                                   const size_t dataSize = 0);
-    size_t telegramWriteData(uint8_t *data, size_t size);
-    TelegramConsts::TelegramStatus telegramEndTransaction();
-    TelegramConsts::TelegramStatus sendMessage(const char *message, const char *chatId = nullptr);
-    void sendKeepAlive();
+
+    /**
+     * Stops the module.
+     */
     void stop();
+
+    /**
+     * Starts a telegram transaction.
+     * @param type type of transaction
+     * @param chatId chat id to send the message to, can be nullptr, in which the default chat id will be used.
+     * @param data should be the message text if the type = MESSAGE and the filename if the request type is a file type.
+     * @param dataSize should be the size of the file, if the type is a file type.
+     * @return TelegramConsts::OK if success, other errors from TelegramConsts::TelegramStatus if not.
+     */
+    TelegramConsts::TelegramStatus telegramStartTransaction(TelegramConsts::TelegramRequestType type,
+                                                            const char *chatId,
+                                                            const char *data,
+                                                            const size_t dataSize = 0);
+
+    /**
+     * Writes data to an open telegram transaction (opened with telegramStartTransaction).
+     * @return the size of data written.
+     */
+    size_t telegramWriteData(uint8_t *data, size_t size);
+
+    /**
+     * Ends the current telegram transaction.
+     * @return TelegramConsts::OK if success, other errors from TelegramConsts::TelegramStatus if not.
+     */
+    TelegramConsts::TelegramStatus telegramEndTransaction();
+
+    /**
+     * Sends a telegram message to the specified chat id.
+     * @return TelegramConsts::OK if success, other errors from TelegramConsts::TelegramStatus if not.
+     */
+    TelegramConsts::TelegramStatus sendMessage(const char *message, const char *chatId = nullptr);
+
+    /**
+     * Sends a keep-alive request (for internal use only).
+     */
+    void sendKeepAlive();
+
+    /**
+     * Checks if the internal tcp client is currently connected to the telegram server.
+     */
     bool isConnected();
 }
 
