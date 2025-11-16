@@ -4,14 +4,12 @@
 #include <capacitance.h>
 #include <secrets.h>
 
-// #define EMBER_ENABLE_DEBUG_LOG
+#define EMBER_ENABLE_DEBUG_LOG
 #define EMBER_ENABLE_LOGGING
 #define EMBER_CHANNEL_COUNT 5
 #include <EmberIot.h>
 #include <EmberIotNotifications.h>
 
-#define CAP_SENSE_PIN 4
-#define CAP_CHARGE_PIN 3
 #define TRIGGER_PIN 8
 #define ECHO_PIN 7
 #define PUMP_PIN 1
@@ -21,18 +19,14 @@
 #define MAX_PUMP_ON_TIME 200
 #define MIN_PUMP_ON_TIME 100
 
-#define MIN_WATER_LEVEL_PF 90
-#define MAX_WATER_LEVEL_PF 175
-#define WATER_LEVEL_READING_INTERVAL 60000
-#define WATER_LEVEL_READINGS 20
-
 #define EMBER_BOARD_ID 0
 #define POWER_CHANNEL 0
 #define MAX_DIST_CHANNEL 1
-#define WATER_LEVEL_CHANNEL 2
 #define MAX_PUMP_POWER_CHANNEL 3
 #define MIN_PUMP_POWER_CHANNEL 4
 #define STATUS_CHANNEL 5
+
+#define MIN_DISTANCE_CM 10
 
 enum Status
 {
@@ -77,12 +71,10 @@ unsigned long pumpTimer = 0;
 unsigned long lastWaterLevelUpdate = 0;
 
 int pumpOnTime = 100;
-int minPower = 0;
+int minPower = 1;
 int maxPower = 50;
 int triggerDistanceCm = 45;
-
-double waterLevelReadings[WATER_LEVEL_READINGS]{0};
-size_t currentWaterLevelReading = 0;
+unsigned long timesReadingZero = 0;
 
 // On/off
 EMBER_CHANNEL_CB(0)
@@ -129,11 +121,6 @@ EMBER_CHANNEL_CB(4)
     }
 }
 
-long getWaterLevel(double capacitancePf)
-{
-    return constrain(map(capacitancePf, MIN_WATER_LEVEL_PF, MAX_WATER_LEVEL_PF, 0, 100), 0, 100);
-}
-
 bool hasValue(const char* str)
 {
     return str != nullptr && strlen(str) > 0;
@@ -146,8 +133,8 @@ int getPumpPower(unsigned long distanceCm)
         return maxPower;
     }
 
-    pumpOnTime = constrain(map(distanceCm, 20, triggerDistanceCm, MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME), MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME);
-    return constrain(map(map(distanceCm, 20, triggerDistanceCm, minPower, maxPower), 0, 100, 10, 255), 10, 255);
+    pumpOnTime = constrain(map(distanceCm, MIN_DISTANCE_CM, triggerDistanceCm, MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME), MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME);
+    return constrain(map(map(distanceCm, MIN_DISTANCE_CM, triggerDistanceCm, minPower, maxPower), 0, 100, 10, 255), 10, 255);
 }
 
 int compareULong(const void* a, const void* b) {
@@ -161,13 +148,13 @@ int compareULong(const void* a, const void* b) {
 
 void setup()
 {
+    EmberIotShared::timezoneOffsetSeconds = -(3600*3);
+
 #ifdef ENABLE_LOGGING
     Serial.begin(115200);
 #endif
 
     delay(1500);
-
-    initCapacitance(CAP_CHARGE_PIN, CAP_SENSE_PIN);
 
     ESP_CONFIG_PAGE::setSerial(&webserial);
     ESP_CONFIG_PAGE::setAPConfig(boardName, apPass);
@@ -199,7 +186,7 @@ void setup()
                              emberPassword->value,
                              webapiKey->value);
         ember->init();
-        ember->channelWrite(POWER_CHANNEL, isOn ? EMBER_BUTTON_ON : EMBER_BUTTON_OFF);
+        // ember->channelWrite(POWER_CHANNEL, isOn ? EMBER_BUTTON_ON : EMBER_BUTTON_OFF);
     }
 
     emberNotification.init(userUid);
@@ -237,34 +224,6 @@ void loop()
         if (ember != nullptr)
         {
             ember->loop();
-
-            if (millis() - lastWaterLevelUpdate > WATER_LEVEL_READING_INTERVAL)
-            {
-                waterLevelReadings[currentWaterLevelReading] = measureCapacitancePF(10, CAP_CHARGE_PIN, CAP_SENSE_PIN, 2, 3.3);
-                currentWaterLevelReading++;
-
-                if (currentWaterLevelReading >= WATER_LEVEL_READINGS)
-                {
-                    double average = 0;
-                    for (double waterLevelReading : waterLevelReadings)
-                    {
-                        average += waterLevelReading;
-                    }
-                    average /= WATER_LEVEL_READINGS;
-
-                    int level = getWaterLevel(average);
-                    ember->channelWrite(WATER_LEVEL_CHANNEL, (long long) level);
-                    lastWaterLevelUpdate = millis();
-                    currentWaterLevelReading = 0;
-
-                    if (level <= 5 && currentStatus == SQUIRT_SCANNING)
-                    {
-                        currentStatus = SQUIRT_WATER_LEVEL_LOW;
-                        ember->channelWrite(STATUS_CHANNEL, SQUIRT_WATER_LEVEL_LOW);
-                        emberNotification.send(deviceName, "Nível de água baixo!");
-                    }
-                }
-            }
         }
     }
 
@@ -296,20 +255,25 @@ void loop()
             LOG(average);
             LOGN("cm");
 
-            // if (average == 0)
-            // {
-            //     LOGN("Error reading distance.");
-            //     if (currentStatus != SQUIRT_SCAN_ERROR)
-            //     {
-            //         currentStatus = SQUIRT_SCAN_ERROR;
-            //         ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
-            //         emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
-            //     }
-            // }
-            // else
-            if (average < triggerDistanceCm) {
+            if (average == 0)
+            {
+                timesReadingZero++;
+            }
+
+            if (average == 0 && timesReadingZero >= 20)
+            {
+                LOGN("Error reading distance.");
+                if (currentStatus != SQUIRT_SCAN_ERROR)
+                {
+                    currentStatus = SQUIRT_SCAN_ERROR;
+                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
+                    emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
+                }
+            }
+            else if (average < triggerDistanceCm) {
+                timesReadingZero = 0;
                 LOGN("Squirt set.");
-                ledcWrite(PUMP_PIN, getPumpPower(average));
+                ledcWrite(PUMP_PIN, getPumpPower(average < MIN_DISTANCE_CM ? MIN_DISTANCE_CM : average));
 
                 hasSquirt = true;
                 pumpTimer = millis();
