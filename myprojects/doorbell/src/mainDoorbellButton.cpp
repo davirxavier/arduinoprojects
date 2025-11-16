@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-// #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#define ESP_CONFIG_PAGE_ENABLE_LOGGING
 #define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #include <esp-config-page.h>
 #include <WebSocketsClient.h>
@@ -8,7 +8,11 @@
 
 // #define TELEGRAM_ENABLE_LOGGING
 // #define TELEGRAM_LOG_DEBUG
-#include <telegram-requests-idf.h>
+#include <esp_http_client.h>
+#include <telegram-requests-arduino.h>
+
+#define EMBER_CHANNEL_COUNT 1
+#include <EmberIotNotifications.h>
 
 #define BUTTON_PIN 3
 #define SNAPSHOT_INTERVAL 15000
@@ -20,6 +24,7 @@ unsigned long ringTimer = 0;
 unsigned long lastRing = 0;
 unsigned long lastMessageSent = 0;
 unsigned long lastPrintSent = 0 - 15000;
+unsigned long lastSoundNotificationSent = 0;
 
 ESP_CONFIG_PAGE::WEBSERVER_T httpServer(80);
 
@@ -44,23 +49,23 @@ void sendCamPhoto()
 {
     if (!hasValue(cameraUrlVar))
     {
-        ESP_LOGI("SNAP", "Cam url not set.");
         return;
     }
 
     if (!hasValue(tokenVar) || !hasValue(chatIdVar))
     {
-        ESP_LOGI("SNAP", "Telegram values not set.");
+        ESP_LOGE("SNAP", "Telegram values not set.");
         return;
     }
 
-    ESP_LOGI("SNAP", "Starting snap download.");
+    unsigned long startTime = millis();
     esp_err_t status = esp_http_client_perform(snapClient);
     if (status != ESP_OK)
     {
-        ESP_LOGI("TELEGRAM", "Error trying to download snap.");
+        ESP_LOGE("TELEGRAM", "Error trying to download snap.");
         esp_http_client_close(snapClient);
     }
+    ESP_LOGE("SNAP", "Elapsed time: %lu", millis() - startTime);
 }
 
 void initClients()
@@ -76,6 +81,7 @@ void initClients()
     }
 
     static volatile bool telegramStarted = false;
+    static volatile int64_t totalWritten = 0;
 
     esp_http_client_config_t snapConfig = {
         .url = cameraUrlVar->value,
@@ -83,6 +89,7 @@ void initClients()
         .password = CAM_PASS,
         .auth_type = HTTP_AUTH_TYPE_DIGEST,
         .method = HTTP_METHOD_GET,
+        .timeout_ms = 30000,
         .event_handler = [](esp_http_client_event_t *e)
         {
             switch (e->event_id)
@@ -91,6 +98,7 @@ void initClients()
                 {
                     if (!telegramStarted)
                     {
+                        totalWritten = 0;
                         int64_t length = esp_http_client_get_content_length(e->client);
                         int status = TelegramRequests::telegramStartTransaction(
                             TelegramConsts::PHOTO,
@@ -101,19 +109,21 @@ void initClients()
 
                         if (!telegramStarted)
                         {
-                            ESP_LOGI("TELEGRAM", "Error starting telegram transaction: %d", status);
+                            TEL_LOGF("Error starting telegram transaction: %d\n", status);
                             lastPrintSent = millis() - SNAPSHOT_INTERVAL;
                             return ESP_FAIL;
                         }
                     }
 
-                    TelegramRequests::telegramWriteData((uint8_t*) e->data, e->data_len);
+                    totalWritten += TelegramRequests::telegramWriteData((uint8_t*) e->data, e->data_len);
                     break;
                 }
             case HTTP_EVENT_ERROR:
             case HTTP_EVENT_ON_FINISH:
             case HTTP_EVENT_DISCONNECTED:
                 {
+                    TEL_LOGF("Snap image total written: %lld\n", totalWritten);
+
                     if (telegramStarted)
                     {
                         TelegramRequests::telegramEndTransaction();
@@ -164,6 +174,9 @@ void setup() {
     httpServer.begin();
     initClients();
 
+    EmberIotShared::timezoneOffsetSeconds = -3 * 3600;
+    fcmNotifications.init(userUid);
+
     if (hasValue(bellIpVar))
     {
         webSocket.begin(bellIpVar->value, 3333);
@@ -175,10 +188,16 @@ void setup() {
 void loop() {
     if (!botStarted && ESP_CONFIG_PAGE::isWiFiReady())
     {
-        TelegramRequests::sendMessage("A campainha está online.", chatIdVar->value);
+        TelegramRequests::sendMessage("Campainha online.", chatIdVar->value);
         botStarted = true;
     }
 
+    if (botStarted)
+    {
+        TelegramRequests::loop();
+    }
+
+    fcmNotifications.loop();
     ESP_CONFIG_PAGE::loop();
     httpServer.handleClient();
     webSocket.loop();
@@ -209,6 +228,12 @@ void loop() {
         {
             sendCamPhoto();
             lastPrintSent = millis();
+        }
+
+        if (millis() - lastSoundNotificationSent > 10000)
+        {
+            fcmNotifications.send("Campainha", "A campainha está tocando.", 2, 30, true);
+            lastSoundNotificationSent = millis();
         }
 
         shouldRing = false;

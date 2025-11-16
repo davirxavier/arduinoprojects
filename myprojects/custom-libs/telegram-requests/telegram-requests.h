@@ -50,6 +50,7 @@ namespace TelegramConsts
         WRITE_ERROR,
         KEEP_ALIVE,
         CONNECT_RETRY,
+        BUSY,
     };
 
     constexpr char host[] = "api.telegram.org";
@@ -194,7 +195,7 @@ namespace TelegramRequests
     /**
      * Sends a keep-alive request (for internal use only).
      */
-    void sendKeepAlive();
+    TelegramConsts::TelegramStatus sendKeepAlive();
 
     /**
      * Checks if the internal tcp client is currently connected to the telegram server.

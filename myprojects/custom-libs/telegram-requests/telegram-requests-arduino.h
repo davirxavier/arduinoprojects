@@ -182,7 +182,9 @@ namespace TelegramRequests
             return 0;
         }
 
-        return client.write(data, size);
+        size_t written = client.write(data, size);
+        TEL_LOGF("Written %zu bytes of %zu\n", written, size);
+        return written;
     }
 
     inline TelegramConsts::TelegramStatus telegramEndTransaction()
@@ -228,11 +230,16 @@ namespace TelegramRequests
         return ret;
     }
 
-    inline void sendKeepAlive()
+    inline TelegramConsts::TelegramStatus sendKeepAlive()
     {
-        if (TelegramConsts::token == nullptr || hasRequest)
+        if (TelegramConsts::token == nullptr)
         {
-            return;
+            return TelegramConsts::NO_TOKEN;
+        }
+
+        if (hasRequest)
+        {
+            return TelegramConsts::BUSY;
         }
 
         TEL_LOGN("Sending keep-alive.");
@@ -248,6 +255,8 @@ namespace TelegramRequests
         TEL_PRINT_BOTH(F("Accepts: */*\r\n"));
         TEL_PRINT_BOTH(F("User-Agent: esp-telegram-bot-client\r\n\r\n"));
         readRemaining();
+
+        return TelegramConsts::OK;
     }
 
     inline TelegramConsts::TelegramStatus loop()
