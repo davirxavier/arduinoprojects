@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
-#define ESP_CONFIG_PAGE_ENABLE_LOGGING
-#define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
+// #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+// #define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #include <esp-config-page.h>
 #include <WebSocketsClient.h>
 #include <secrets.h>
@@ -11,6 +11,8 @@
 #include <esp_http_client.h>
 #include <telegram-requests-arduino.h>
 
+// #define EMBER_ENABLE_LOGGING
+// #define EMBER_ENABLE_DEBUG_LOG
 #define EMBER_CHANNEL_COUNT 1
 #include <EmberIotNotifications.h>
 
@@ -148,8 +150,6 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     ESP_CONFIG_PAGE::setAPConfig("ESP32-BELLBTN", "adminadmin");
-    ESP_CONFIG_PAGE::tryConnectWifi(false, 20000);
-
     ESP_CONFIG_PAGE::addEnvVar(usernameVar);
     ESP_CONFIG_PAGE::addEnvVar(passwordVar);
     ESP_CONFIG_PAGE::addEnvVar(chatIdVar);
@@ -180,7 +180,7 @@ void setup() {
     if (hasValue(bellIpVar))
     {
         webSocket.begin(bellIpVar->value, 3333);
-        webSocket.setReconnectInterval(1000);
+        webSocket.setReconnectInterval(15000);
         webSocket.enableHeartbeat(5000, 15000, 10);
     }
 }
