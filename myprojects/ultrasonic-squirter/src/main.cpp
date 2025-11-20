@@ -1,11 +1,14 @@
 #include <Arduino.h>
 #include <NewPing.h>
+
+#define ENABLE_LOGGING
+#define ESP_CONFIG_PAGE_ENABLE_LOGGING
 #include <esp-config-page.h>
 #include <capacitance.h>
 #include <secrets.h>
 
-#define EMBER_ENABLE_DEBUG_LOG
-#define EMBER_ENABLE_LOGGING
+// #define EMBER_ENABLE_DEBUG_LOG
+// #define EMBER_ENABLE_LOGGING
 #define EMBER_CHANNEL_COUNT 5
 #include <EmberIot.h>
 #include <EmberIotNotifications.h>
@@ -13,7 +16,7 @@
 #define TRIGGER_PIN 8
 #define ECHO_PIN 7
 #define PUMP_PIN 1
-#define PING_DELAY_MS 30
+#define PING_DELAY_MS 50
 #define PING_READINGS 30
 #define PING_IGNORE_OUTLIERS 7
 #define MAX_PUMP_ON_TIME 200
@@ -22,6 +25,7 @@
 #define EMBER_BOARD_ID 0
 #define POWER_CHANNEL 0
 #define MAX_DIST_CHANNEL 1
+#define PUMP_ON_TIME_CHANNEL 2
 #define MAX_PUMP_POWER_CHANNEL 3
 #define MIN_PUMP_POWER_CHANNEL 4
 #define STATUS_CHANNEL 5
@@ -61,16 +65,15 @@ unsigned long successiveSquirtResetTimer = 0;
 ESP_CONFIG_PAGE::WEBSERVER_T server(80);
 EmberIot* ember = nullptr;
 FCMEmberNotifications emberNotification(gcmEmail, gcmPrivateKey);
-ESP_CONFIG_PAGE_LOGGING::SERIAL_T webserial;
 
-bool isOn = true;
+bool isOn = false;
 
 unsigned long lastSentNotification = 0;
 bool hasSquirt = false;
 unsigned long pumpTimer = 0;
 unsigned long lastWaterLevelUpdate = 0;
 
-int pumpOnTime = 100;
+int pumpOnTime = 50;
 int minPower = 1;
 int maxPower = 50;
 int triggerDistanceCm = 45;
@@ -98,6 +101,16 @@ EMBER_CHANNEL_CB(1)
     if (val > 0 && val < 200)
     {
         triggerDistanceCm = val;
+    }
+}
+
+// Pump on time
+EMBER_CHANNEL_CB(2)
+{
+    int time = prop.toInt();
+    if (time > 50 && time < 1000)
+    {
+        pumpOnTime = time;
     }
 }
 
@@ -133,7 +146,7 @@ int getPumpPower(unsigned long distanceCm)
         return maxPower;
     }
 
-    pumpOnTime = constrain(map(distanceCm, MIN_DISTANCE_CM, triggerDistanceCm, MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME), MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME);
+    // pumpOnTime = constrain(map(distanceCm, MIN_DISTANCE_CM, triggerDistanceCm, MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME), MIN_PUMP_ON_TIME, MAX_PUMP_ON_TIME);
     return constrain(map(map(distanceCm, MIN_DISTANCE_CM, triggerDistanceCm, minPower, maxPower), 0, 100, 10, 255), 10, 255);
 }
 
@@ -156,9 +169,8 @@ void setup()
 
     delay(1500);
 
-    ESP_CONFIG_PAGE::setSerial(&webserial);
     ESP_CONFIG_PAGE::setAPConfig(boardName, apPass);
-    ESP_CONFIG_PAGE::tryConnectWifi(false, 15000);
+    ESP_CONFIG_PAGE::tryConnectWifi(false, 5000);
 
     ESP_CONFIG_PAGE::addEnvVar(user);
     ESP_CONFIG_PAGE::addEnvVar(pass);
@@ -171,8 +183,6 @@ void setup()
 
     ESP_CONFIG_PAGE::initModules(&server, user->value, pass->value, boardName);
     server.begin();
-
-    ESP_CONFIG_PAGE_LOGGING::enableLogging(user->value, pass->value, webserial);
 
     if (hasValue(rtdbUrl->value) &&
         hasValue(emberUser->value) &&
@@ -208,14 +218,13 @@ void loop()
         squirtTimeout = millis();
     }
 
+    server.handleClient();
+    ESP_CONFIG_PAGE::loop();
+
     if (hasSquirt)
     {
         return;
     }
-
-    server.handleClient();
-    ESP_CONFIG_PAGE::loop();
-    ESP_CONFIG_PAGE_LOGGING::loop();
 
     if (WiFi.status() == WL_CONNECTED)
     {
