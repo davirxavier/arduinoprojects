@@ -1,21 +1,12 @@
-#define ESP32_CONP_OTA_USE_WEBSOCKETS
-#define ESP_CONFIG_PAGE_ENABLE_LOGGING
-
 #include <Arduino.h>
 #include <JPEGDEC.h>
-#include "driver/rtc_io.h"
+#include <general/config_page_setup.h>
 
-#include "FS.h"
-#include "SD_MMC.h"
 #include <WiFi.h>
 #include "time.h"
-#include "ESP-FTP-Server-Lib.h"
-#include "FTPFilesystem.h"
-#include <WebServer.h>
 #include "general/image_util.h"
 #include <general/secrets.h>
 #include <general/cam_config.h>
-#include <esp-config-page.h>
 
 #define FRAME_CAPTURE_INTERVAL_S 2000
 #define LUMINOSITY_PIN 12
@@ -24,9 +15,6 @@
 unsigned long snapCounter = 0; // -FRAME_CAPTURE_INTERVAL_S * 1000;
 bool cameraInit = false;
 bool timeInit = false;
-
-FTPServer ftp;
-WebServer server(8080);
 
 JPEGDEC jpegdec;
 
@@ -218,7 +206,6 @@ void snap(char* foldername, size_t foldernameBufferSize, const char* folder, Cam
     file.write(fb->buf, fb->len);
     file.close();
 
-    saveCrops(foldername, filenameBuffer, sizeof(filenameBuffer), fb);
     snprintf(filenameBuffer, sizeof(filenameBuffer), "%s/full.jpg", foldername);
     snprintf(foldername, foldernameBufferSize, "%s", filenameBuffer);
 
@@ -370,27 +357,6 @@ void setup()
     cameraInit = CamConfig::initCamera();
     cameraInit = CamConfig::initSdCard();
 
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::startXEnvVar);
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::startYEnvVar);
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::frameCountX);
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::frameCountY);
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::frameWidthVar);
-    ESP_CONFIG_PAGE::addEnvVar(CamConfig::frameHeightVar);
-    ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("/env"));
-
-    ESP_CONFIG_PAGE::addCustomAction("RESTART", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
-    {
-        server.send(200);
-        ESP.restart();
-    });
-
-    ESP_CONFIG_PAGE::setAPConfig(nodeName, password);
-    ESP_CONFIG_PAGE::initModules(&server, username, password, nodeName);
-
-    ftp.addUser(username, password);
-    ftp.addFilesystem("SD", &SD_MMC);
-    ftp.begin();
-
     server.on("/snap", HTTP_GET, []()
     {
         if (!cameraInit)
@@ -399,10 +365,14 @@ void setup()
             return;
         }
 
+        int c = server.arg("c").toInt();
         String f = server.arg("f");
 
         char filename[128]{};
-        snap(filename, 128, "/ondemand", (CamConfig::CamFlashMode) f.toInt());
+        for (int i = 0; i < c; i++)
+        {
+            snap(filename, 128, "/ondemand2", (CamConfig::CamFlashMode) f.toInt());
+        }
 
         File file = SD_MMC.open(filename, FILE_READ);
         server.streamFile(file, "image/jpeg");
@@ -424,17 +394,14 @@ void setup()
        instant((CamConfig::CamFlashMode) server.arg("f").toInt());
     });
 
-    server.begin();
-
+    ConfigPageSetup::setupConfigPage();
     Serial.printf("Initialized, IP: %s\n", WiFi.localIP().toString().c_str());
     Serial.printf("Psram/heap free size: %zu/%zu\n", ESP.getFreePsram(), ESP.getFreeHeap());
 }
 
 void loop()
 {
-    ESP_CONFIG_PAGE::loop();
-    server.handleClient();
-    ftp.handle();
+    ConfigPageSetup::configPageLoop();
 
     if (WiFi.status() == WL_CONNECTED)
     {

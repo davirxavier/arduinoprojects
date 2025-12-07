@@ -7,6 +7,9 @@
 
 #include <general/util.h>
 #include <esp_camera.h>
+#include "FS.h"
+#include "SD_MMC.h"
+#include "driver/rtc_io.h"
 #include <esp-config-page.h>
 
 #define PWDN_GPIO_NUM  32
@@ -52,7 +55,7 @@ camera_config_t camConfig = {
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
     .pixel_format = PIXFORMAT_JPEG,
-    .frame_size = FRAMESIZE_SXGA,
+    .frame_size = FRAMESIZE_SVGA,
     .jpeg_quality = 8,
     .fb_count = 2,
     .fb_location = CAMERA_FB_IN_PSRAM,

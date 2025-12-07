@@ -1,5 +1,7 @@
 #pragma once
 
+#include <JPEGDEC.h>
+
 namespace JPEG_DECODE_UTIL
 {
     uint8_t* currentBuf = nullptr;
@@ -118,6 +120,7 @@ namespace IMAGE_UTIL
         OPEN_JPEG_ERROR,
         DECODE_ERROR,
         COORDINATES_OUT_OF_BOUND,
+        BUFFER_TOO_SMALL,
     };
 
     enum JpegScale
@@ -229,6 +232,18 @@ namespace IMAGE_UTIL
         return OK;
     }
 
+    inline Status getRgb888ImageSize(uint8_t* image, size_t size, size_t* out)
+    {
+        ImageDimensions dim{};
+        Status dimRet = getImageDimensions(image, size, &dim);
+        if (dimRet != OK)
+        {
+            return dimRet;
+        }
+        *out = (unsigned int) dim.width * dim.height * 3;
+        return OK;
+    }
+
     // Frame x, y, width and height should be multiples of 8, ex: 128 or 256 or 384
     inline Status getImageFrameRgb888(
         uint8_t* image,
@@ -274,6 +289,52 @@ namespace IMAGE_UTIL
         *outWidth = finalFrameWidth;
         *outHeight = finalFrameHeight;
         *written = (*outWidth) * (*outHeight) * 3;
+        return OK;
+    }
+
+    /**
+     * Always remember to free the out buffer.
+     */
+    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *&out, size_t &outLength, bool usePsram = true)
+    {
+        ImageDimensions dimensions{};
+        Status res = getImageDimensions(image, imageLen, &dimensions);
+        if (res != OK)
+        {
+            return res;
+        }
+
+        size_t bufSize = dimensions.width*dimensions.height*3;
+        uint8_t *buf = nullptr;
+        if (usePsram)
+        {
+            buf = (uint8_t*) ps_malloc(bufSize);
+        }
+        else
+        {
+            buf = (uint8_t*) malloc(bufSize);
+        }
+
+        if (buf == nullptr)
+        {
+            return DECODE_BUF_ALLOCATION_FAILED;
+        }
+
+        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::jpegToBuffer(buf, bufSize, dimensions.width)))
+        {
+            free(buf);
+            return OPEN_JPEG_ERROR;
+        }
+
+        jpegdec.setPixelType(RGB8888);
+        if (!jpegdec.decode(0, 0, 0))
+        {
+            free(buf);
+            return DECODE_ERROR;
+        }
+
+        out = buf;
+        outLength = bufSize;
         return OK;
     }
 }
