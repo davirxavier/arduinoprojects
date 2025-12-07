@@ -3,17 +3,48 @@
 #include <general/cam_config.h>
 #include <general/inference_util.h>
 
-bool cameraInit = false;
+volatile bool cameraInit = false;
 bool timeInit = false;
 unsigned long inferenceTimer = 0;
-unsigned long inferenceDelay = 50;
+unsigned long inferenceDelay = 1000;
+volatile bool inferenceOn = true;
+
+[[noreturn]] void inferenceTask(void *args)
+{
+    TickType_t interval = pdMS_TO_TICKS(inferenceDelay);
+    TickType_t lastWake = xTaskGetTickCount();
+
+    while (true)
+    {
+        if (cameraInit && inferenceOn)
+        {
+            InferenceUtil::runInference();
+        }
+        else if (!cameraInit)
+        {
+            Serial.println("Camera not initialized, trying again.");
+            cameraInit = CamConfig::initCamera();
+            if (!cameraInit)
+            {
+                Serial.println("Error re-initializing camera.");
+            }
+        }
+
+        vTaskDelayUntil(&lastWake, interval);
+        vTaskDelay(1);
+    }
+}
 
 void setup()
 {
     Serial.begin(115200);
     camConfig.frame_size = FRAMESIZE_240X240;
+    InferenceUtil::cameraImageWidth = 240;
+    InferenceUtil::cameraImageHeight = 240;
     cameraInit = CamConfig::initCamera();
-    cameraInit = CamConfig::initSdCard();
+
+    // Not using right now (and conflicts with pin 13, needs pullup always)
+    // cameraInit = CamConfig::initSdCard();
 
     ConfigPageSetup::setupConfigPage();
 
@@ -27,13 +58,13 @@ void setup()
             return;
         }
 
+        String action = server.arg("action");
         uint8_t *image = nullptr;
         size_t imageLen = 0;
-        InferenceUtil::InferenceOutput inference = InferenceUtil::runInference(image, imageLen);
-
+        InferenceUtil::InferenceOutput inference = InferenceUtil::runInference(&image, &imageLen);
         if (inference.status == 0)
         {
-            if (!server.arg("action").isEmpty() && InferenceUtil::shouldTrigger(inference))
+            if (!action.isEmpty() && InferenceUtil::shouldTrigger(inference))
             {
                 ActionUtil::doAction();
             }
@@ -45,10 +76,17 @@ void setup()
             uint8_t *jpegout = nullptr;
             size_t jpegLen = 0;
 
-            fmt2jpg(image, imageLen, 96, 96, PIXFORMAT_RGB888, 200, &jpegout, &jpegLen);
-            server.send_P(200, "image/jpeg", (char*) jpegout, jpegLen);
-
-            free(image);
+            bool result = fmt2jpg(image, imageLen, 96, 96, PIXFORMAT_RGB888, 200, &jpegout, &jpegLen);
+            if (result)
+            {
+                server.send_P(200, "image/jpeg", (char*) jpegout, jpegLen);
+                free(image);
+                free(jpegout);
+            }
+            else
+            {
+                server.send(500, "text/plain", "Error encoding image to jpeg.");
+            }
         }
         else
         {
@@ -56,8 +94,31 @@ void setup()
         }
     });
 
+    server.on("/inf", HTTP_DELETE, []()
+    {
+        VALIDATE_AUTH();
+        inferenceOn = false;
+        server.send(200);
+    });
+
+    server.on("/inf", HTTP_POST, []()
+    {
+        VALIDATE_AUTH();
+        inferenceOn = true;
+        server.send(200);
+    });
+
     delay(1000);
     Serial.println("Started.");
+
+    xTaskCreatePinnedToCore(
+        inferenceTask,
+        "inferencetask",
+        8192,
+        nullptr,
+        3,
+        nullptr,
+        0);
 }
 
 void loop()
@@ -74,15 +135,4 @@ void loop()
             timeInit = getLocalTime(&info);
         }
     }
-
-    // if (!cameraInit)
-    // {
-    //     return;
-    // }
-    //
-    // if (millis() - inferenceTimer > inferenceDelay)
-    // {
-    //     runInference();
-    //     inferenceTimer = millis();
-    // }
 }

@@ -10,15 +10,15 @@
 #include <edge-impulse-sdk/dsp/image/processing.hpp>
 #include <general/image_util.h>
 
-#define CAMERA_IMAGE_WIDTH 240
-#define CAMERA_IMAGE_HEIGHT 240
-
 namespace InferenceUtil
 {
+    inline int cameraImageWidth = 240;
+    inline int cameraImageHeight = 240;
+
     constexpr char catLabel[] = "cat";
     constexpr char humanLabel[] = "human";
-    inline float catThreshold = 0.75;
-    inline float humanThreshold = 0.55;
+    constexpr float catThreshold = 0.75;
+    constexpr float humanThreshold = 0.55;
 
     constexpr size_t currentOutputLen = 1024;
     inline char currentOutput[currentOutputLen]{};
@@ -55,11 +55,15 @@ namespace InferenceUtil
         va_list args_copy;
         va_copy(args_copy, args);
 
-        size_t bufSize = vsnprintf(nullptr, 0, log, args_copy)+1;
+        size_t bufSize = vsnprintf(nullptr, 0, log, args_copy) + 2;
         if (currentOutputOffset + bufSize <= currentOutputLen)
         {
             char buf[bufSize]{};
             vsnprintf(buf, bufSize, log, args_copy);
+
+            size_t msgLen = strlen(buf);
+            buf[msgLen] = ';';
+            buf[msgLen + 1] = '\0';
 
             Serial.vprintf(log, args);
             if (ln)
@@ -106,11 +110,12 @@ namespace InferenceUtil
                 pixels_left--;
             }
 
+            vTaskDelay(1);
             return 0;
         };
     }
 
-    inline InferenceOutput runInference(uint8_t*& image, size_t& imageLen)
+    inline InferenceOutput runInference(uint8_t **image = nullptr, size_t *imageLen = nullptr)
     {
         unsigned long startTimer = millis();
         InferenceOutput output{};
@@ -123,7 +128,7 @@ namespace InferenceUtil
             return output;
         }
 
-        auto snapshotBuf = (uint8_t*) ps_malloc(CAMERA_IMAGE_WIDTH * CAMERA_IMAGE_HEIGHT * 3);
+        auto snapshotBuf = (uint8_t*) ps_malloc(cameraImageWidth * cameraImageHeight * 3);
         if (snapshotBuf == nullptr)
         {
             printError("Failed to allocated snapshot buffer", -1, output);
@@ -138,13 +143,14 @@ namespace InferenceUtil
         }
 
         esp_camera_fb_return(cameraImage);
-        if (ei::image::processing::crop_and_interpolate_rgb888(
+        int resizeResult = ei::image::processing::crop_and_interpolate_rgb888(
             snapshotBuf,
-            CAMERA_IMAGE_WIDTH,
-            CAMERA_IMAGE_HEIGHT,
+            cameraImageWidth,
+            cameraImageHeight,
             snapshotBuf,
             EI_CLASSIFIER_INPUT_WIDTH,
-            EI_CLASSIFIER_INPUT_HEIGHT) == false)
+            EI_CLASSIFIER_INPUT_HEIGHT);
+        if (resizeResult != EI_IMPULSE_OK)
         {
             printError("Error resizing image for inferencing", -3, output);
             return output;
@@ -157,7 +163,7 @@ namespace InferenceUtil
         classifierSignal.total_length = totalLengthFeatures;
         classifierSignal.get_data = getDataFromBuffer(snapshotBuf);
 
-        EI_IMPULSE_ERROR classifierResult = run_classifier(&classifierSignal, &result, true);
+        EI_IMPULSE_ERROR classifierResult = run_classifier(&classifierSignal, &result, false);
         if (classifierResult != EI_IMPULSE_OK)
         {
             printError("Error running inference", classifierResult, output);
@@ -187,8 +193,16 @@ namespace InferenceUtil
             }
         }
 
-        image = snapshotBuf;
-        imageLen = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT * 3;
+        if (image != nullptr && imageLen != nullptr)
+        {
+            *image = snapshotBuf;
+            *imageLen = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT * 3;
+        }
+        else
+        {
+            free(snapshotBuf);
+        }
+
         printLog("Classification ran successfully, time taken: %lu", true, millis() - startTimer);
         return output;
     }

@@ -292,10 +292,8 @@ namespace IMAGE_UTIL
         return OK;
     }
 
-    /**
-     * Always remember to free the out buffer.
-     */
-    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *&out, size_t &outLength, bool usePsram = true)
+    // out buffer should always be width * height * 3 of length
+    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *out)
     {
         ImageDimensions dimensions{};
         Status res = getImageDimensions(image, imageLen, &dimensions);
@@ -304,37 +302,18 @@ namespace IMAGE_UTIL
             return res;
         }
 
-        size_t bufSize = dimensions.width*dimensions.height*3;
-        uint8_t *buf = nullptr;
-        if (usePsram)
+        size_t bufSize = dimensions.width * dimensions.height * 3;
+        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::jpegToBuffer(out, bufSize, dimensions.width)))
         {
-            buf = (uint8_t*) ps_malloc(bufSize);
-        }
-        else
-        {
-            buf = (uint8_t*) malloc(bufSize);
-        }
-
-        if (buf == nullptr)
-        {
-            return DECODE_BUF_ALLOCATION_FAILED;
-        }
-
-        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::jpegToBuffer(buf, bufSize, dimensions.width)))
-        {
-            free(buf);
             return OPEN_JPEG_ERROR;
         }
 
         jpegdec.setPixelType(RGB8888);
         if (!jpegdec.decode(0, 0, 0))
         {
-            free(buf);
             return DECODE_ERROR;
         }
 
-        out = buf;
-        outLength = bufSize;
         return OK;
     }
 }
