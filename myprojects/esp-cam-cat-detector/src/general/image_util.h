@@ -149,6 +149,39 @@ namespace IMAGE_UTIL
 
     JPEGDEC jpegdec;
 
+    inline void crop_resize_square_bgr_inplace(uint8_t* src, int src_w, int src_h, int dst_w, int dst_h) {
+        // Determine square crop (fit shortest axis)
+        int crop_size = src_w < src_h ? src_w : src_h;
+        int x_offset = (src_w - crop_size) / 2;
+        int y_offset = (src_h - crop_size) / 2;
+
+        float x_ratio = (float)(crop_size - 1) / (dst_w - 1);
+        float y_ratio = (float)(crop_size - 1) / (dst_h - 1);
+
+        // We write the output directly to src (overwrite top-left)
+        for (int y = 0; y < dst_h; y++) {
+            float fy = y * y_ratio;
+            int y0 = (int)fy;
+            int y1 = y0 + 1 < crop_size ? y0 + 1 : y0;
+            float wy = fy - y0;
+
+            for (int x = 0; x < dst_w; x++) {
+                float fx = x * x_ratio;
+                int x0 = (int)fx;
+                int x1 = x0 + 1 < crop_size ? x0 + 1 : x0;
+                float wx = fx - x0;
+
+                for (int c = 0; c < 3; c++) { // B, G, R channels
+                    float val = (1 - wx) * (1 - wy) * src[((y0 + y_offset) * src_w + (x0 + x_offset)) * 3 + c] +
+                                wx * (1 - wy) * src[((y0 + y_offset) * src_w + (x1 + x_offset)) * 3 + c] +
+                                (1 - wx) * wy * src[((y1 + y_offset) * src_w + (x0 + x_offset)) * 3 + c] +
+                                wx * wy * src[((y1 + y_offset) * src_w + (x1 + x_offset)) * 3 + c];
+                    src[(y * dst_w + x) * 3 + c] = (uint8_t)(val + 0.5f);
+                }
+            }
+        }
+    }
+
 #define crop_desired_size_to_limit(pos, dsiz, siz) (((pos + dsiz) >= siz) ? (siz - pos) : dsiz)
 
     inline Status getImageDimensions(uint8_t *buf, size_t bufSize, ImageDimensions *dimensions)

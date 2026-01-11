@@ -1,10 +1,12 @@
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
 
 #include <Arduino.h>
+#include <sdkconfig.h>
 #include <general/secrets.h>
 #include <general/config_page_setup.h>
 #include <general/cam_config.h>
 #include <general/inference_util.h>
+#include <general/model_util.h>
 
 volatile bool cameraInit = false;
 bool timeInit = false;
@@ -26,7 +28,7 @@ void inferenceTask(void *args)
             InferenceUtil::InferenceOutput result = InferenceUtil::runInferenceFromImage(fb->buf, fb->len);
             esp_camera_fb_return(fb);
 
-            if (result.status == EI_IMPULSE_OK && result.count > 0)
+            if (result.status == ModelUtil::OK && result.count > 0)
             {
                 MLOGN("Inference returned positive result, triggering.");
                 doAction = true;
@@ -90,6 +92,10 @@ void handleServerUpload()
             return;
         }
 
+        size_t srcSize = MODEL_DATA_INPUT_WIDTH * MODEL_DATA_INPUT_HEIGHT * MODEL_DATA_INPUT_CHANNELS;
+        auto src = (uint8_t*) ps_malloc(srcSize);
+        fmt2rgb888(buffer, uploadOffset, PIXFORMAT_JPEG, src);
+
         InferenceUtil::InferenceOutput result = InferenceUtil::runInferenceFromImage(buffer, uploadOffset);
         if (result.status == 0)
         {
@@ -145,11 +151,19 @@ void setup()
     Serial.begin(115200);
 #endif
 
+    esp_log_level_set("*", ESP_LOG_NONE);
+
     camConfig.frame_size = FRAMESIZE_240X240;
     cameraInit = CamConfig::initCamera();
 
     // Not using right now (and conflicts with pin 13, needs pullup always)
     // cameraInit = CamConfig::initSdCard();
+
+    int modelInitRes = ModelUtil::loadModel();
+    if (modelInitRes != ModelUtil::OK)
+    {
+        MLOGF("Error initializing model: %d\n", modelInitRes);
+    }
 
     server.on("/inf-toggle", HTTP_POST, []()
     {
