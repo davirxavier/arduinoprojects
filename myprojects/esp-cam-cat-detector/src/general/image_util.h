@@ -4,9 +4,14 @@
 
 namespace JPEG_DECODE_UTIL
 {
-    uint8_t* currentBuf = nullptr;
-    size_t currentBufSize = 0;
-    size_t currentWidth = 0;
+
+    struct DecodeContext
+    {
+        uint8_t* buf = nullptr;
+        size_t bufLen = 0;
+        size_t imageWidth = 0;
+        bool outputBGR = false;
+    };
 
     enum Status
     {
@@ -14,6 +19,10 @@ namespace JPEG_DECODE_UTIL
         BUFFER_TOO_SMALL,
         INVALID_BUFFER,
     };
+
+    inline uint8_t rgb_to_gray(uint8_t r, uint8_t g, uint8_t b) {
+        return (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
+    }
 
     inline void rgb_to_bgr888(uint8_t* buffer, size_t length)
     {
@@ -38,7 +47,16 @@ namespace JPEG_DECODE_UTIL
 
     inline int decodeFn(JPEGDRAW* pDraw)
     {
-        if (currentBuf == nullptr) return 0;
+        if (pDraw->pUser == nullptr)
+        {
+            Serial.println("No pUser set to decode.");
+            return 0;
+        }
+
+        auto *context = (DecodeContext*) pDraw->pUser;
+        uint8_t *currentBuf = context->buf;
+        size_t currentBufSize = context->bufLen;
+        int currentWidth = context->imageWidth;
 
         const int bytesPerPixel = pDraw->iBpp / 8; // 2 for RGB565, 4 for ARGB8888
 
@@ -61,22 +79,26 @@ namespace JPEG_DECODE_UTIL
 
                 for (int col = 0; col < copyWidth; ++col)
                 {
-                    // uint8_t b = src[col * 4 + 0];
-                    // uint8_t g = src[col * 4 + 1];
-                    // uint8_t r = src[col * 4 + 2];
-                    // // uint8_t a = src[col * 4 + 3]; // ignored
-                    //
-                    // dst[col * 3 + 0] = r;
-                    // dst[col * 3 + 1] = g;
-                    // dst[col * 3 + 2] = b;
+                    if (context->outputBGR)
+                    {
+                        uint8_t r = src[col * 4 + 0];
+                        uint8_t g = src[col * 4 + 1];
+                        uint8_t b = src[col * 4 + 2];
 
-                    uint8_t r = src[col * 4 + 0];
-                    uint8_t g = src[col * 4 + 1];
-                    uint8_t b = src[col * 4 + 2];
+                        dst[col * 3 + 0] = b;
+                        dst[col * 3 + 1] = g;
+                        dst[col * 3 + 2] = r;
+                    }
+                    else
+                    {
+                        uint8_t r = src[col * 4 + 0];
+                        uint8_t g = src[col * 4 + 1];
+                        uint8_t b = src[col * 4 + 2];
 
-                    dst[col * 3 + 0] = r;
-                    dst[col * 3 + 1] = g;
-                    dst[col * 3 + 2] = b;
+                        dst[col * 3 + 0] = r;
+                        dst[col * 3 + 1] = g;
+                        dst[col * 3 + 2] = b;
+                    }
                 }
             }
             else
@@ -96,18 +118,6 @@ namespace JPEG_DECODE_UTIL
         }
 
         return 1;
-    }
-
-    inline JPEG_DRAW_CALLBACK* jpegToBuffer(
-        uint8_t* buf,
-        size_t bufSize,
-        size_t width)
-    {
-        currentBuf = buf;
-        currentBufSize = bufSize;
-        currentWidth = width;
-
-        return decodeFn;
     }
 }
 
@@ -272,11 +282,17 @@ namespace IMAGE_UTIL
 
         jpegdec.close();
 
-        if (!jpegdec.openRAM(image, size, JPEG_DECODE_UTIL::jpegToBuffer(out, outSize, finalFrameWidth)))
+        JPEG_DECODE_UTIL::DecodeContext context{};
+        context.buf = out;
+        context.bufLen = outSize;
+        context.imageWidth = finalFrameWidth;
+
+        if (!jpegdec.openRAM(image, size, JPEG_DECODE_UTIL::decodeFn))
         {
             return OPEN_JPEG_ERROR;
         }
 
+        jpegdec.setUserPointer(&context);
         jpegdec.setPixelType(RGB8888);
         jpegdec.setCropArea(frameX, frameY, finalFrameWidth, finalFrameHeight);
 
@@ -293,7 +309,7 @@ namespace IMAGE_UTIL
     }
 
     // out buffer should always be width * height * 3 of length
-    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *out)
+    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *out, bool outputBGR = false)
     {
         ImageDimensions dimensions{};
         Status res = getImageDimensions(image, imageLen, &dimensions);
@@ -303,11 +319,18 @@ namespace IMAGE_UTIL
         }
 
         size_t bufSize = dimensions.width * dimensions.height * 3;
-        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::jpegToBuffer(out, bufSize, dimensions.width)))
+        JPEG_DECODE_UTIL::DecodeContext context{};
+        context.buf = out;
+        context.bufLen = bufSize;
+        context.imageWidth = dimensions.width;
+        context.outputBGR = outputBGR;
+
+        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::decodeFn))
         {
             return OPEN_JPEG_ERROR;
         }
 
+        jpegdec.setUserPointer(&context);
         jpegdec.setPixelType(RGB8888);
         if (!jpegdec.decode(0, 0, 0))
         {

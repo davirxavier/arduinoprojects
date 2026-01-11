@@ -5,80 +5,89 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#define ACTION_PIN 13
+#define ENABLE_LOGGING
+#ifdef ENABLE_LOGGING
+#define MLOG(str) Serial.print(str)
+#define MLOGN(str) Serial.println(str)
+#define MLOGF(str, p...) Serial.printf(str, p)
+#define MVLOGF(str, p...) Serial.vprintf(str, p)
+#else
+#define MLOG(str)
+#define MLOGN(str)
+#define MLOGF(str, p...)
+#define MVLOGF(str, p...)
+#endif
 
-namespace ActionUtil
-{
-    inline bool hasAction = false;
-    inline unsigned long actionTimer = 0;
-    inline unsigned long actionOnTime = 800;
+#define ACTION_PIN 16
 
-    inline const unsigned long minDelay = 200;
-    inline unsigned long lastActionEnd = 0;
-
-    inline unsigned long timeout = 300 * 1000;
-    inline int maxActionsPerPeriod = 45;
-    inline int actionsCount = 0;
-    inline unsigned long actionsOveruseTimer = 0;
-    inline unsigned long actionsOveruseReset = 90 * 1000;
-    inline bool hasTimeout = false;
-    inline unsigned long timeoutStart = 0;
-
-    inline void setup()
-    {
+class ActionController {
+public:
+    void setup() {
         pinMode(ACTION_PIN, OUTPUT);
         digitalWrite(ACTION_PIN, LOW);
         actionsOveruseTimer = millis();
     }
 
-    inline void doAction()
-    {
-        if (hasAction || hasTimeout || millis() - lastActionEnd < minDelay)
-        {
+    void doAction() {
+        if (hasAction || hasTimeout || millis() - lastActionEnd < minDelay) {
             return;
         }
 
         hasAction = true;
         actionTimer = millis();
         digitalWrite(ACTION_PIN, HIGH);
+        MLOGN("Do action start.");
     }
 
-    inline void loop()
-    {
-        if (hasTimeout && millis() - timeoutStart > timeout)
-        {
+    void loop() {
+        if (hasTimeout && millis() - timeoutStart > timeout) {
             hasTimeout = false;
+            MLOGN("Overuse timeout ended.");
         }
 
-        if (hasTimeout)
-        {
+        if (hasTimeout) {
             return;
         }
 
-        if (hasAction && millis() - actionTimer > actionOnTime)
-        {
+        if (hasAction && millis() - actionTimer > actionOnTime) {
             hasAction = false;
             digitalWrite(ACTION_PIN, LOW);
             actionsCount++;
             lastActionEnd = millis();
+            MLOGN("Do action end.");
         }
 
-        if (millis() - actionsOveruseTimer > actionsOveruseReset)
-        {
+        if (millis() - actionsOveruseTimer > actionsOveruseReset) {
             actionsCount = 0;
             actionsOveruseTimer = millis();
         }
 
-        if (actionsCount > maxActionsPerPeriod)
-        {
+        if (actionsCount > maxActionsPerPeriod) {
             hasTimeout = true;
             timeoutStart = millis();
             hasAction = false;
             digitalWrite(ACTION_PIN, LOW);
             actionTimer = 0;
+            MLOGN("Action overuse detected, probably some problem is happening.");
         }
     }
-}
+
+private:
+    bool hasAction = false;
+    unsigned long actionTimer = 0;
+    const unsigned long actionOnTime = 800;
+
+    const unsigned long minDelay = 200;
+    unsigned long lastActionEnd = 0;
+
+    const unsigned long timeout = 300 * 1000;
+    const int maxActionsPerPeriod = 45;
+    int actionsCount = 0;
+    unsigned long actionsOveruseTimer = 0;
+    const unsigned long actionsOveruseReset = 90 * 1000;
+    bool hasTimeout = false;
+    unsigned long timeoutStart = 0;
+};
 
 typedef enum {
     STR2INT_SUCCESS,

@@ -10,7 +10,6 @@
 #include "FS.h"
 #include "SD_MMC.h"
 #include "driver/rtc_io.h"
-#include <esp-config-page.h>
 
 #define PWDN_GPIO_NUM  32
 #define RESET_GPIO_NUM (-1)
@@ -71,53 +70,6 @@ namespace CamConfig
         AUTO
     };
 
-    ESP_CONFIG_PAGE::EnvVar *startXEnvVar = new ESP_CONFIG_PAGE::EnvVar("FRAME_START_X", "");
-    ESP_CONFIG_PAGE::EnvVar *startYEnvVar = new ESP_CONFIG_PAGE::EnvVar("FRAME_START_Y", "");
-    ESP_CONFIG_PAGE::EnvVar *frameCountX = new ESP_CONFIG_PAGE::EnvVar("FRAME_COUNT_X", "");
-    ESP_CONFIG_PAGE::EnvVar *frameCountY = new ESP_CONFIG_PAGE::EnvVar("FRAME_COUNT_Y", "");
-    ESP_CONFIG_PAGE::EnvVar *frameWidthVar = new ESP_CONFIG_PAGE::EnvVar("FRAME_WIDTH", "");
-    ESP_CONFIG_PAGE::EnvVar *frameHeightVar = new ESP_CONFIG_PAGE::EnvVar("FRAME_HEIGHT", "");
-
-    inline int getParsedVar(ESP_CONFIG_PAGE::EnvVar *var, int defaultVal)
-    {
-        if (var->value == nullptr || strlen(var->value) == 0)
-        {
-            return defaultVal;
-        }
-
-        int out = -1;
-        int ret = str2int(&out, var->value, 10);
-        if (ret != STR2INT_SUCCESS)
-        {
-            return defaultVal;
-        }
-
-        return out;
-    }
-
-    struct FrameConfig
-    {
-        int startFrameX;
-        int startFrameY;
-        int frameCountX;
-        int frameCountY;
-        int frameWidth;
-        int frameHeight;
-    };
-
-    inline FrameConfig getFrameConfig()
-    {
-        const FrameConfig ret = {
-            .startFrameX = getParsedVar(startXEnvVar, 576),
-            .startFrameY = getParsedVar(startYEnvVar, 0),
-            .frameCountX = getParsedVar(frameCountX, 1),
-            .frameCountY = getParsedVar(frameCountY, 6),
-            .frameWidth = getParsedVar(frameWidthVar, 384),
-            .frameHeight = getParsedVar(frameHeightVar, 384),
-        };
-        return ret;
-    }
-
     inline bool initSdCard()
     {
         if (!SD_MMC.begin("/sdcard", true))
@@ -159,7 +111,7 @@ namespace CamConfig
         s->set_wb_mode(s, 1);
         s->set_denoise(s, 3);       // High denoise (0-3)
         s->set_vflip(s, 1);
-        s->set_brightness(s, 0);
+        s->set_brightness(s, 1);
         s->set_saturation(s, -2);
         s->set_aec2(s, 1);          // Better auto-exposure
         s->set_gainceiling(s, GAINCEILING_8X);
