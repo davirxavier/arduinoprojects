@@ -9,15 +9,26 @@
 #include <general/image_util.h>
 #include "model_util.h"
 
+// #define INFERENCE_ENABLE_LOG
+
+#ifdef INFERENCE_ENABLE_LOG
+#define INFERENCE_LOG_FN(p...) printLog(p)
+#define INFERENCE_ERROR_FN(error, errorNum, output) printError(error, errorNum, output)
+#else
+#define INFERENCE_LOG_FN(p...)
+#define INFERENCE_ERROR_FN(error, errorNum, output)
+#endif
+
 // #define MODEL_IS_GRAYSCALE
 #define MODEL_INPUT_WIDTH 96
 #define MODEL_INPUT_HEIGHT 96
 #define MAX_BOXES 10
-#define MODEL_DOWNSCALING_FACTOR 8.0
+#define MODEL_DOWNSCALING_FACTOR 8.0f
 #define MODEL_OUTPUT_ROWS ((int) MODEL_DATA_INPUT_HEIGHT/(int)MODEL_DOWNSCALING_FACTOR)
 #define MODEL_OUTPUT_COLS ((int) MODEL_DATA_INPUT_WIDTH/(int)MODEL_DOWNSCALING_FACTOR)
 #define MODEL_CLASS_COUNT 3
 #define MAX_LABEL_LENGTH 32
+#define MAX_INFERENCE_DECODE_LENGTH (1024 * 1000)
 
 namespace InferenceUtil
 {
@@ -25,12 +36,16 @@ namespace InferenceUtil
     constexpr float thresholds[] = {1, 0.75, 0.5};
     constexpr uint8_t catIndex = 1;
     constexpr uint8_t humanIndex = 2;
-
-    constexpr size_t currentOutputLen = 1024;
     inline unsigned long currentStartTimer = 0;
+
+#ifdef INFERENCE_ENABLE_LOG
+    constexpr size_t currentOutputLen = 1024;
     inline char currentOutput[currentOutputLen]{};
     inline size_t currentOutputOffset = 0;
     inline bool currentOutputTruncated = false;
+#else
+    inline char currentOutput[1]{};
+#endif
 
     struct InferenceValues
     {
@@ -45,6 +60,7 @@ namespace InferenceUtil
         InferenceValues foundValues[MAX_BOXES]{};
         size_t count = 0;
         int status = 0; // 0 = OK, less than 0 = Error
+        unsigned long totalLatency = 0;
 
         bool add(const InferenceValues& val)
         {
@@ -65,12 +81,16 @@ namespace InferenceUtil
 
     inline void initOutputStr()
     {
+#ifdef INFERENCE_ENABLE_LOG
         memset(currentOutput, 0, currentOutputLen);
         currentOutputTruncated = false;
         currentOutputOffset = 0;
+#endif
+
         currentStartTimer = millis();
     }
 
+#ifdef INFERENCE_ENABLE_LOG
     inline void printError(const char* error, const int& errorNum, InferenceOutput& output)
     {
         currentOutputOffset = snprintf(currentOutput, currentOutputLen, "%s: %d", error, errorNum);
@@ -121,6 +141,7 @@ namespace InferenceUtil
 
         // Serial.printf("Current timer: %lu\n", millis() - currentStartTimer);
     }
+#endif
 
     inline bool keep_cell(
         const uint8_t* grid,
@@ -173,9 +194,9 @@ namespace InferenceUtil
         return true;
     }
 
-    inline int runClassifierAndExtractInfo(const uint8_t* imageBuffer, InferenceOutput* output)
+    inline int runClassifierAndExtractInfo(const uint8_t* imageBuffer, InferenceOutput &output)
     {
-        printLog("Running inference.");
+        INFERENCE_LOG_FN("Running inference.");
 
         uint8_t *outputBuffer = nullptr;
         int resultStatus = ModelUtil::runInference(&outputBuffer, [imageBuffer](uint8_t *dst)
@@ -190,14 +211,14 @@ namespace InferenceUtil
                 dst[3*i + 2] = b;
             }
         });
+
         if (resultStatus != ModelUtil::OK)
         {
-            printError("Error running inference", resultStatus, *output);
+            INFERENCE_ERROR_FN("Error running inference", resultStatus, *output);
             return resultStatus;
         }
 
-        printLog("Extracting object positions.", true);
-
+        INFERENCE_LOG_FN("Extracting object positions.", true);
         for (size_t i = 0; i < MODEL_OUTPUT_ROWS; i++)
         {
             for (size_t j = 0; j < MODEL_OUTPUT_COLS; j++)
@@ -212,24 +233,18 @@ namespace InferenceUtil
                         continue;
                     }
 
-                    if (!keep_cell(
-                        outputBuffer,
-                        MODEL_OUTPUT_ROWS,
-                        MODEL_OUTPUT_COLS,
-                        i,
-                        j,
-                        ci,
-                        value))
+                    if (!keep_cell(outputBuffer, MODEL_OUTPUT_ROWS, MODEL_OUTPUT_COLS, i, j, ci, value))
                     {
                         continue;
                     }
 
                     InferenceValues values{};
                     values.value = value;
-                    values.x = j * MODEL_DOWNSCALING_FACTOR;
-                    values.y = i * MODEL_DOWNSCALING_FACTOR;
+                    values.x = (j + 0.5f) * MODEL_DOWNSCALING_FACTOR;
+                    values.y = (i + 0.5f) * MODEL_DOWNSCALING_FACTOR;
                     snprintf(values.label, MAX_LABEL_LENGTH, "%s", classes[ci]);
-                    printLog("Found object of class %d at cell with value %f at row/col=%d/%d, calculated x/y=%f/%f",
+
+                    INFERENCE_LOG_FN("Found object of class %d at cell with value %f at row/col=%d/%d, calculated x/y=%f/%f",
                              true,
                              ci,
                              value,
@@ -238,40 +253,56 @@ namespace InferenceUtil
                              values.x,
                              values.y);
 
-                    output->add(values);
+                    output.add(values);
                 }
             }
         }
 
-        output->status = ModelUtil::OK;
+        output.status = ModelUtil::OK;
         return ModelUtil::OK;
     }
 
-    inline InferenceOutput runInferenceFromImage(uint8_t* image, size_t imageLen, uint8_t** outProcessed = nullptr, size_t* outSize = nullptr)
+    inline void runInferenceFromImage(
+        InferenceOutput &output,
+        uint8_t* image,
+        size_t imageLen,
+        uint8_t** outProcessed = nullptr,
+        size_t* outSize = nullptr)
     {
-        InferenceOutput output{};
         initOutputStr();
 
-        printLog("Converting picture");
+        INFERENCE_LOG_FN("Converting picture");
         IMAGE_UTIL::ImageDimensions dimensions;
         int imageDimensionsResult = IMAGE_UTIL::getImageDimensions(image, imageLen, &dimensions);
         if (imageDimensionsResult != IMAGE_UTIL::OK)
         {
-            printError("Error opening image", -imageDimensionsResult, output);
-            return output;
+            INFERENCE_ERROR_FN("Error opening image", -imageDimensionsResult, output);
+            return;
         }
 
         size_t decodeBufferSize = dimensions.width * dimensions.height * 3;
-        auto decodeBuffer = (uint8_t*)ps_malloc(decodeBufferSize);
+        if (decodeBufferSize > MAX_INFERENCE_DECODE_LENGTH)
+        {
+            INFERENCE_ERROR_FN("Image too large.", -66, output);
+            return;
+        }
+
+        auto decodeBuffer = (uint8_t*) ps_malloc(decodeBufferSize);
+        if (decodeBuffer == nullptr)
+        {
+            INFERENCE_ERROR_FN("Failed to allocate decode buffer.", -55, output);
+            return;
+        }
+
         memset(decodeBuffer, 0, decodeBufferSize);
         bool decodeResult = fmt2rgb888(image, imageLen, PIXFORMAT_JPEG, decodeBuffer);
         if (!decodeResult)
         {
-            printError("Error decoding image.", -1, output);
-            return output;
+            INFERENCE_ERROR_FN("Error decoding image.", -1, output);
+            return;
         }
 
-        if (dimensions.width != MODEL_DATA_INPUT_WIDTH || dimensions.height != MODEL_DATA_INPUT_HEIGHT)
+        if (dimensions.width > MODEL_DATA_INPUT_WIDTH || dimensions.height > MODEL_DATA_INPUT_HEIGHT)
         {
             IMAGE_UTIL::crop_resize_square_bgr_inplace(
                 decodeBuffer,
@@ -281,8 +312,9 @@ namespace InferenceUtil
                 MODEL_DATA_INPUT_HEIGHT);
         }
 
-        runClassifierAndExtractInfo(decodeBuffer, &output);
-        printLog("Total time taken: %lu", true, millis() - currentStartTimer);
+        runClassifierAndExtractInfo(decodeBuffer, output);
+        output.totalLatency = millis() - currentStartTimer;
+        INFERENCE_LOG_FN("Total time taken: %lu", true, output.totalLatency);
 
         if (outProcessed != nullptr && outSize != nullptr)
         {
@@ -293,8 +325,6 @@ namespace InferenceUtil
         {
             free(decodeBuffer);
         }
-
-        return output;
     }
 
     inline bool shouldTrigger(const InferenceOutput &output)

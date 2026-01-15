@@ -25,7 +25,9 @@ void inferenceTask(void *args)
         if (cameraInit && inferenceOn)
         {
             camera_fb_t *fb = esp_camera_fb_get();
-            InferenceUtil::InferenceOutput result = InferenceUtil::runInferenceFromImage(fb->buf, fb->len);
+
+            InferenceUtil::InferenceOutput result{};
+            InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len);
             esp_camera_fb_return(fb);
 
             if (result.status == ModelUtil::OK && result.count > 0)
@@ -96,19 +98,34 @@ void handleServerUpload()
         auto src = (uint8_t*) ps_malloc(srcSize);
         fmt2rgb888(buffer, uploadOffset, PIXFORMAT_JPEG, src);
 
-        InferenceUtil::InferenceOutput result = InferenceUtil::runInferenceFromImage(buffer, uploadOffset);
+        InferenceUtil::InferenceOutput result{};
+        InferenceUtil::runInferenceFromImage(result, buffer, uploadOffset);
         if (result.status == 0)
         {
-            size_t len = strlen(InferenceUtil::currentOutput);
-            for (size_t i = 0; i < len; i++)
+            char buf[256] = "Objects found:\n";
+            char numBuf[16]{};
+
+            for (size_t i = 0; i < result.count; i++)
             {
-                if (InferenceUtil::currentOutput[i] == ';')
-                {
-                    InferenceUtil::currentOutput[i] = '\n';
-                }
+                InferenceUtil::InferenceValues &vals = result.foundValues[i];
+                strcat(buf, vals.label);
+                strcat(buf, " - prob=");
+
+                snprintf(numBuf, sizeof(numBuf), "%f", vals.value);
+                strcat(buf, numBuf);
+
+                snprintf(numBuf, sizeof(numBuf), "%f", vals.x);
+                strcat(buf, ", x=");
+                strcat(buf, numBuf);
+
+                snprintf(numBuf, sizeof(numBuf), "%f", vals.y);
+                strcat(buf, ", y=");
+                strcat(buf, numBuf);
+
+                strcat(buf, "\n");
             }
 
-            server.send(200, "text/plain", InferenceUtil::currentOutput);
+            server.send(200, "text/plain", buf);
         }
         else
         {
@@ -155,9 +172,7 @@ void setup()
 
     camConfig.frame_size = FRAMESIZE_240X240;
     cameraInit = CamConfig::initCamera();
-
-    // Not using right now (and conflicts with pin 13, needs pullup always)
-    // cameraInit = CamConfig::initSdCard();
+    // CamConfig::initSdCard();
 
     int modelInitRes = ModelUtil::loadModel();
     if (modelInitRes != ModelUtil::OK)
@@ -178,21 +193,27 @@ void setup()
         uint8_t *outImg = nullptr;
         size_t outImgSize = 0;
 
-        InferenceUtil::InferenceOutput result = InferenceUtil::runInferenceFromImage(fb->buf, fb->len, &outImg, &outImgSize);
+        InferenceUtil::InferenceOutput result{};
+        InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, &outImg, &outImgSize);
         if (InferenceUtil::shouldTrigger(result))
         {
             doAction = true;
             server.sendHeader("x-action", "true");
         }
+        else
+        {
+            server.sendHeader("x-action", "false");
+        }
 
         server.sendHeader("x-result", InferenceUtil::currentOutput);
+        esp_camera_fb_return(fb);
 
         uint8_t *outJpeg = nullptr;
         size_t outJpegSize = 0;
         fmt2jpg(outImg, outImgSize, 96, 96, PIXFORMAT_RGB888, 200, &outJpeg, &outJpegSize);
         free(outImg);
+
         server.send_P(200, "image/jpeg", (char*) outJpeg, outJpegSize);
-        esp_camera_fb_return(fb);
         free(outJpeg);
     });
 

@@ -1,16 +1,16 @@
-#ifndef ESP32
 #include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <WiFi.h>
+
+#define ESP_CONFIG_PAGE_ENABLE_LOGGING
 #include <esp-config-page.h>
 
-#define RING_PIN 2
+#define RING_PIN 7
 
 volatile bool shouldRing = false;
 bool ringing = false;
 unsigned long ringTimer = 0;
 
-ESP8266WebServer httpServer(80);
+WebServer httpServer(80);
 WebSocketsServer socketServer(3333);
 
 auto usernameVar = new ESP_CONFIG_PAGE::EnvVar("USERNAME", "");
@@ -21,8 +21,9 @@ bool useBot = false;
 void setup() {
     Serial.begin(115200);
     pinMode(RING_PIN, OUTPUT);
+    delay(1000);
 
-    ESP_CONFIG_PAGE::setAPConfig("ESP-BELLBELL1", "");
+    ESP_CONFIG_PAGE::setAPConfig("ESP-BELLBELL1", "admin13246");
     ESP_CONFIG_PAGE::tryConnectWifi(false, 15000);
 
     ESP_CONFIG_PAGE::addEnvVar(usernameVar);
@@ -99,4 +100,3 @@ void loop() {
         ringing = false;
     }
 }
-#endif

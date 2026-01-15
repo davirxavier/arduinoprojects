@@ -58,7 +58,7 @@ namespace ModelUtil
 
     inline int loadModel()
     {
-        currentModel = tflite::GetModel(model_data_tflite);
+        currentModel = tflite::GetModel(model_data::tflite);
         if (currentModel->version() != TFLITE_SCHEMA_VERSION)
         {
             MicroPrintf("Model provided is schema version %d not equal to supported version %d.", currentModel->version(), TFLITE_SCHEMA_VERSION);
@@ -77,22 +77,7 @@ namespace ModelUtil
 #endif
 
         static tflite::MicroMutableOpResolver<MODEL_DATA_DISTINCT_OPS_COUNT> opResolver;
-        opResolver.AddQuantize();
-        opResolver.AddDepthwiseConv2D();
-        opResolver.AddConv2D();
-        opResolver.AddMaxPool2D();
-        opResolver.AddStridedSlice();
-        opResolver.AddGreaterEqual();
-        opResolver.AddCast();
-        opResolver.AddMul();
-        opResolver.AddAdd();
-        opResolver.AddSum();
-        opResolver.AddSub();
-        opResolver.AddMinimum();
-        opResolver.AddRelu();
-        opResolver.AddRelu6();
-        opResolver.AddConcatenation();
-        opResolver.AddSoftmax();
+        model_data::RegisterOps(opResolver);
 
 #ifdef MODEL_DEBUG_RAM
         currentInterpreter = new tflite::RecordingMicroInterpreter(

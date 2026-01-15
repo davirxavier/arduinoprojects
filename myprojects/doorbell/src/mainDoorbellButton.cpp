@@ -11,11 +11,6 @@
 #include <esp_http_client.h>
 #include <telegram-requests-arduino.h>
 
-// #define EMBER_ENABLE_LOGGING
-// #define EMBER_ENABLE_DEBUG_LOG
-#define EMBER_CHANNEL_COUNT 1
-#include <EmberIotNotifications.h>
-
 #define BUTTON_PIN 3
 #define SNAPSHOT_INTERVAL 15000
 
@@ -26,7 +21,6 @@ unsigned long ringTimer = 0;
 unsigned long lastRing = 0;
 unsigned long lastMessageSent = 0;
 unsigned long lastPrintSent = 0 - 15000;
-unsigned long lastSoundNotificationSent = 0;
 
 ESP_CONFIG_PAGE::WEBSERVER_T httpServer(80);
 
@@ -174,9 +168,6 @@ void setup() {
     httpServer.begin();
     initClients();
 
-    EmberIotShared::timezoneOffsetSeconds = -3 * 3600;
-    fcmNotifications.init(userUid);
-
     if (hasValue(bellIpVar))
     {
         webSocket.begin(bellIpVar->value, 3333);
@@ -197,7 +188,6 @@ void loop() {
         TelegramRequests::loop();
     }
 
-    fcmNotifications.loop();
     ESP_CONFIG_PAGE::loop();
     httpServer.handleClient();
     webSocket.loop();
@@ -228,12 +218,6 @@ void loop() {
         {
             sendCamPhoto();
             lastPrintSent = millis();
-        }
-
-        if (millis() - lastSoundNotificationSent > 10000)
-        {
-            fcmNotifications.send("Campainha", "A campainha está tocando.", 2, 30, true);
-            lastSoundNotificationSent = millis();
         }
 
         shouldRing = false;
