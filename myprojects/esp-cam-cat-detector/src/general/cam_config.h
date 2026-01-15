@@ -6,6 +6,7 @@
 #define CAM_CONFIG_H
 
 #include <general/util.h>
+#include <general/cam_optimizations.h>
 #include <esp_camera.h>
 #include "FS.h"
 #include "SD_MMC.h"
@@ -50,13 +51,13 @@ camera_config_t camConfig = {
     .pin_href = HREF_GPIO_NUM,
     .pin_pclk = PCLK_GPIO_NUM,
 
-    .xclk_freq_hz = 10000000,
+    .xclk_freq_hz = 20000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
     .pixel_format = PIXFORMAT_JPEG,
     .frame_size = FRAMESIZE_SVGA,
     .jpeg_quality = 8,
-    .fb_count = 2,
+    .fb_count = 1,
     .fb_location = CAMERA_FB_IN_PSRAM,
     .grab_mode = CAMERA_GRAB_LATEST
 };
@@ -101,35 +102,20 @@ namespace CamConfig
             return false;
         }
 
-        sensor_t *s = esp_camera_sensor_get();
+        CamOpt::updateExposure();
 
-        // Required for denoise to work well
-        s->set_gain_ctrl(s, 1);     // Auto gain ON
-        s->set_agc_gain(s, 0);      // Let AGC choose the gain
-
-        // Camera tweaks
-        s->set_wb_mode(s, 1);
-        s->set_denoise(s, 3);       // High denoise (0-3)
-        s->set_vflip(s, 1);
-        s->set_brightness(s, 1);
-        s->set_saturation(s, -2);
-        s->set_aec2(s, 1);          // Better auto-exposure
-        s->set_gainceiling(s, GAINCEILING_8X);
-
-        s->set_bpc(s, 1);
-        s->set_wpc(s, 1);
-        s->set_raw_gma(s, 1);
-
-        delay(100);
-
-        Serial.println("Getting initial frame buffer.");
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb)
+        Serial.println("Getting initial frame buffers.");
+        for (size_t i = 0; i < 3; i++)
         {
-            Serial.println("Initial frame buffer could not be acquired");
-            return false;
+            camera_fb_t* fb = esp_camera_fb_get();
+            if (!fb)
+            {
+                Serial.println("Initial frame buffer could not be acquired");
+                return false;
+            }
+            esp_camera_fb_return(fb);
+            delay(1000);
         }
-        esp_camera_fb_return(fb);
         return true;
     }
 }

@@ -18,7 +18,7 @@
 #define MVLOGF(str, p...)
 #endif
 
-#define ACTION_PIN 16
+#define ACTION_PIN 4
 
 class ActionController {
 public:

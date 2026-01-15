@@ -1,18 +1,29 @@
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
 
+// gpio4 -> pump mosfet (gpio4 is for flash led, should desolder led)
+// gpio3 -> lights mosfet (gpio3 is rx, pulled up high on boot but fine for lights only)
+// gpio13 -> luminance reading
+
 #include <Arduino.h>
+#include <esp_wifi.h>
 #include <sdkconfig.h>
 #include <general/secrets.h>
 #include <general/config_page_setup.h>
 #include <general/cam_config.h>
 #include <general/inference_util.h>
 #include <general/model_util.h>
+#include <general/util.h>
+
+#define AVERAGING_WINDOW 3
+#define INFERENCE_THRESHOLD 0.7f
 
 volatile bool cameraInit = false;
 bool timeInit = false;
+
 unsigned long inferenceTimer = 0;
-unsigned long inferenceDelay = 1000;
+unsigned long inferenceDelay = 800;
 volatile bool inferenceOn = false;
+
 volatile bool doAction = false;
 
 void inferenceTask(void *args)
@@ -26,15 +37,27 @@ void inferenceTask(void *args)
         {
             camera_fb_t *fb = esp_camera_fb_get();
 
-            InferenceUtil::InferenceOutput result{};
-            InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len);
-            esp_camera_fb_return(fb);
-
-            if (result.status == ModelUtil::OK && result.count > 0)
+            float average = 0;
+            for (uint8_t i = 0; i < AVERAGING_WINDOW; i++)
             {
-                MLOGN("Inference returned positive result, triggering.");
-                doAction = true;
+                InferenceUtil::InferenceOutput result{};
+                InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len);
+
+                float val = InferenceUtil::triggerCertainty(result);
+                MLOGF("Inference ran, current certainty: %f\n", val);
+
+                average += val;
+                delay(5);
             }
+            average /= AVERAGING_WINDOW;
+
+            if (average >= INFERENCE_THRESHOLD)
+            {
+                doAction = true;
+                MLOGF("Average %f is higher than threshold, triggering.\n", average);
+            }
+
+            esp_camera_fb_return(fb);
         }
         else if (!cameraInit)
         {
@@ -52,7 +75,7 @@ void inferenceTask(void *args)
 
 void actionTask(void *args)
 {
-    TickType_t interval = pdMS_TO_TICKS(50);
+    TickType_t interval = pdMS_TO_TICKS(100);
     TickType_t lastWake = xTaskGetTickCount();
 
     ActionController action;
@@ -118,13 +141,15 @@ void handleServerUpload()
                 strcat(buf, ", x=");
                 strcat(buf, numBuf);
 
-                snprintf(numBuf, sizeof(numBuf), "%f", vals.y);
                 strcat(buf, ", y=");
                 strcat(buf, numBuf);
 
                 strcat(buf, "\n");
             }
 
+            snprintf(numBuf, sizeof(numBuf), "%f", InferenceUtil::triggerCertainty(result));
+            strcat(buf, "Should trigger certainty: ");
+            strcat(buf, numBuf);
             server.send(200, "text/plain", buf);
         }
         else
@@ -134,6 +159,7 @@ void handleServerUpload()
     }, []()
     {
         VALIDATE_AUTH();
+
         HTTPUpload &upload = server.upload();
         MLOGF("Received upload event %d with name %s and size %zu\n", upload.status, upload.filename.c_str(), upload.totalSize);
 
@@ -162,15 +188,27 @@ void handleServerUpload()
     });
 }
 
+#define LUMINOSITY_PIN 12
+
+uint32_t readLuminosity()
+{
+    esp_wifi_stop();
+    uint32_t lum = analogReadMilliVolts(LUMINOSITY_PIN);
+    Serial.printf("Luminosity: %lu\n", lum);
+    esp_wifi_start();
+    return lum;
+}
+
 void setup()
 {
 #ifdef ENABLE_LOGGING
     Serial.begin(115200);
 #endif
 
+    WiFi.setSleep(WIFI_PS_NONE);
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    camConfig.frame_size = FRAMESIZE_240X240;
+    camConfig.frame_size = FRAMESIZE_VGA;
     cameraInit = CamConfig::initCamera();
     // CamConfig::initSdCard();
 
@@ -179,6 +217,14 @@ void setup()
     {
         MLOGF("Error initializing model: %d\n", modelInitRes);
     }
+
+    server.on("/snap", HTTP_GET, []()
+    {
+        VALIDATE_AUTH();
+        camera_fb_t *fb = esp_camera_fb_get();
+        server.send_P(200, "image/jpeg", (char*) fb->buf, fb->len);
+        esp_camera_fb_return(fb);
+    });
 
     server.on("/inf-toggle", HTTP_POST, []()
     {
@@ -189,21 +235,15 @@ void setup()
 
     server.on("/inf", HTTP_GET, []()
     {
+        VALIDATE_AUTH();
+
         camera_fb_t *fb = esp_camera_fb_get();
         uint8_t *outImg = nullptr;
         size_t outImgSize = 0;
 
         InferenceUtil::InferenceOutput result{};
         InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, &outImg, &outImgSize);
-        if (InferenceUtil::shouldTrigger(result))
-        {
-            doAction = true;
-            server.sendHeader("x-action", "true");
-        }
-        else
-        {
-            server.sendHeader("x-action", "false");
-        }
+        server.sendHeader("x-trigger-certainty", String(InferenceUtil::triggerCertainty(result)));
 
         server.sendHeader("x-result", InferenceUtil::currentOutput);
         esp_camera_fb_return(fb);
@@ -220,7 +260,6 @@ void setup()
     handleServerUpload();
     ConfigPageSetup::setupConfigPage();
 
-    delay(1000);
     MLOGN("Started.");
 
     xTaskCreatePinnedToCore(
@@ -232,28 +271,28 @@ void setup()
         nullptr,
         1);
 
-    // xTaskCreatePinnedToCore(
-    //     actionTask,
-    //     "actiontask",
-    //     4096,
-    //     nullptr,
-    //     3,
-    //     nullptr,
-    //     1);
+    xTaskCreatePinnedToCore(
+        actionTask,
+        "actiontask",
+        2048,
+        nullptr,
+        3,
+        nullptr,
+        1);
 }
 
 void loop()
 {
     ConfigPageSetup::configPageLoop();
 
-    // if (WiFi.status() == WL_CONNECTED)
-    // {
-    //     if (!timeInit)
-    //     {
-    //         // gmt-3
-    //         configTime(-3 * 3600, 0, "pool.ntp.org");
-    //         tm info{};
-    //         timeInit = getLocalTime(&info);
-    //     }
-    // }
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        if (!timeInit)
+        {
+            // gmt-3
+            configTime(-3 * 3600, 0, "pool.ntp.org");
+            tm info{};
+            timeInit = getLocalTime(&info);
+        }
+    }
 }

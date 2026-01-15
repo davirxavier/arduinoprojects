@@ -327,29 +327,34 @@ namespace InferenceUtil
         }
     }
 
-    inline bool shouldTrigger(const InferenceOutput &output)
+    inline float triggerCertainty(const InferenceOutput &output)
     {
         if (output.count == 0)
         {
-            return false;
+            return 0.0f;
         }
 
-        bool hasCat = false;
-        bool hasHuman = false;
+        float maxCatConfidence = 0.0f;
+        float maxHumanConfidence = 0.0f;
 
         for (const InferenceValues &values : output.foundValues)
         {
             if (strcmp(values.label, classes[catIndex]) == 0)
             {
-                hasCat = true;
+                maxCatConfidence = std::max(maxCatConfidence, values.value);
             }
             else if (strcmp(values.label, classes[humanIndex]) == 0)
             {
-                hasHuman = true;
+                maxHumanConfidence = std::max(maxHumanConfidence, values.value);
             }
         }
 
-        return hasCat && !hasHuman;
+        if (maxCatConfidence == 0.0f)
+            return 0.0f;
+
+        // Trigger certainty:
+        // high when cat is strong and human is weak
+        return maxCatConfidence * (1.0f - maxHumanConfidence); // [0.0, 1.0]
     }
 }
 
