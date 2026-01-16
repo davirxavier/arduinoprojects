@@ -18,7 +18,60 @@
 #define MVLOGF(str, p...)
 #endif
 
+// gpio4 -> action mosfet (gpio4 is for flash led, should desolder led)
+// using 4 because i can pull-down it as needed without interfering with other functionality
+
+// gpio3 -> lights mosfet (gpio3 is rx, pulled up high on boot but fine for lights only)
+// using 3 because i can set it to what i want after boot without issues
+
+// gpio12 -> luminosity reading
+
+#define CAM_FLASH_PIN 3
 #define ACTION_PIN 4
+#define LUMINOSITY_PIN 12
+#include <esp_camera.h>
+
+inline uint32_t readLuminosity()
+{
+    esp_wifi_stop();
+    uint32_t lum = analogReadMilliVolts(LUMINOSITY_PIN);
+    Serial.printf("Luminosity: %lu\n", lum);
+    esp_wifi_start();
+    return lum;
+}
+
+inline void toggleFlash(bool on)
+{
+    digitalWrite(CAM_FLASH_PIN, on ? HIGH : LOW);
+}
+
+inline camera_fb_t *getFrameWithFlash()
+{
+    toggleFlash(true);
+    delay(30);
+    camera_fb_t *fb = esp_camera_fb_get();
+    delay(5);
+    toggleFlash(false);
+    return fb;
+}
+
+inline void setupPins()
+{
+    pinMode(3, OUTPUT);
+    toggleFlash(false);
+
+    pinMode(ACTION_PIN, OUTPUT);
+    digitalWrite(ACTION_PIN, LOW);
+}
+
+inline void testRun()
+{
+    digitalWrite(ACTION_PIN, HIGH);
+    toggleFlash(true);
+    delay(500);
+    digitalWrite(ACTION_PIN, LOW);
+    toggleFlash(false);
+}
 
 class ActionController {
 public:

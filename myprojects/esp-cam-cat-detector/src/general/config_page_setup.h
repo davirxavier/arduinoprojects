@@ -61,6 +61,12 @@ namespace ConfigPageSetup
             ESP.restart();
         });
 
+        ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
+        {
+            server.send(200);
+            testRun();
+        });
+
         ESP_CONFIG_PAGE::setAPConfig(nodeName, password);
         ESP_CONFIG_PAGE::initModules(&server, username, password, nodeName);
 

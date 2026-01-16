@@ -1,9 +1,5 @@
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
 
-// gpio4 -> pump mosfet (gpio4 is for flash led, should desolder led)
-// gpio3 -> lights mosfet (gpio3 is rx, pulled up high on boot but fine for lights only)
-// gpio13 -> luminance reading
-
 #include <Arduino.h>
 #include <esp_wifi.h>
 #include <sdkconfig.h>
@@ -24,7 +20,17 @@ unsigned long inferenceTimer = 0;
 unsigned long inferenceDelay = 800;
 volatile bool inferenceOn = false;
 
+unsigned long luminosityUpdateInterval = 30 * 60 * 1000;
+unsigned long luminosityReadTimer = 0;
+uint32_t currentLuminosity = UINT32_MAX;
+
 volatile bool doAction = false;
+
+void updateLuminosity()
+{
+    currentLuminosity = readLuminosity();
+    luminosityReadTimer = millis();
+}
 
 void inferenceTask(void *args)
 {
@@ -35,7 +41,7 @@ void inferenceTask(void *args)
     {
         if (cameraInit && inferenceOn)
         {
-            camera_fb_t *fb = esp_camera_fb_get();
+            camera_fb_t *fb = getFrameWithFlash();
 
             float average = 0;
             for (uint8_t i = 0; i < AVERAGING_WINDOW; i++)
@@ -47,7 +53,7 @@ void inferenceTask(void *args)
                 MLOGF("Inference ran, current certainty: %f\n", val);
 
                 average += val;
-                delay(5);
+                delay(10);
             }
             average /= AVERAGING_WINDOW;
 
@@ -188,22 +194,14 @@ void handleServerUpload()
     });
 }
 
-#define LUMINOSITY_PIN 12
-
-uint32_t readLuminosity()
-{
-    esp_wifi_stop();
-    uint32_t lum = analogReadMilliVolts(LUMINOSITY_PIN);
-    Serial.printf("Luminosity: %lu\n", lum);
-    esp_wifi_start();
-    return lum;
-}
-
 void setup()
 {
 #ifdef ENABLE_LOGGING
     Serial.begin(115200);
 #endif
+
+    setupPins();
+    updateLuminosity();
 
     WiFi.setSleep(WIFI_PS_NONE);
     esp_log_level_set("*", ESP_LOG_NONE);
@@ -218,10 +216,16 @@ void setup()
         MLOGF("Error initializing model: %d\n", modelInitRes);
     }
 
+    server.on("/test-run", HTTP_POST, []()
+    {
+        VALIDATE_AUTH();
+        testRun();
+    });
+
     server.on("/snap", HTTP_GET, []()
     {
         VALIDATE_AUTH();
-        camera_fb_t *fb = esp_camera_fb_get();
+        camera_fb_t *fb = getFrameWithFlash();
         server.send_P(200, "image/jpeg", (char*) fb->buf, fb->len);
         esp_camera_fb_return(fb);
     });
@@ -237,7 +241,7 @@ void setup()
     {
         VALIDATE_AUTH();
 
-        camera_fb_t *fb = esp_camera_fb_get();
+        camera_fb_t *fb = getFrameWithFlash();
         uint8_t *outImg = nullptr;
         size_t outImgSize = 0;
 
@@ -294,5 +298,10 @@ void loop()
             tm info{};
             timeInit = getLocalTime(&info);
         }
+    }
+
+    if (millis() - luminosityReadTimer > luminosityUpdateInterval)
+    {
+        updateLuminosity();
     }
 }
