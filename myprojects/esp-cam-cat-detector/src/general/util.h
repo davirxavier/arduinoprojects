@@ -31,13 +31,41 @@
 #define LUMINOSITY_PIN 12
 #include <esp_camera.h>
 
-inline uint32_t readLuminosity()
+constexpr uint32_t LUM_FLOOR = 128;
+constexpr uint32_t LUM_CEIL  = 2200;
+
+inline float normalizeLum(uint32_t raw)
+{
+    raw = constrain(raw, LUM_FLOOR, LUM_CEIL);
+    return float(raw - LUM_FLOOR) / float(LUM_CEIL - LUM_FLOOR);
+}
+
+inline float linearizeLum(uint32_t raw)
+{
+    float x = normalizeLum(raw);
+
+    // Log curve: expands darks, compresses brights
+    constexpr float K = 9.0f;   // curve strength (6–12 typical)
+    return log1p(K * x) / log1p(K);
+}
+
+inline float readLuminosity()
 {
     esp_wifi_stop();
-    uint32_t lum = analogReadMilliVolts(LUMINOSITY_PIN);
-    Serial.printf("Luminosity: %lu\n", lum);
+
+    size_t averageCount = 5;
+    uint32_t lumAverage = 0;
+    for (size_t i = 0; i < averageCount; i++)
+    {
+        lumAverage += analogReadMilliVolts(LUMINOSITY_PIN);
+        delay(5);
+    }
+    lumAverage /= averageCount;
+
+    Serial.printf("Luminosity: %lu\n", lumAverage);
+
     esp_wifi_start();
-    return lum;
+    return linearizeLum(lumAverage);
 }
 
 inline void toggleFlash(bool on)

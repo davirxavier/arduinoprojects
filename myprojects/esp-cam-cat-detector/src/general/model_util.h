@@ -12,7 +12,6 @@
 
 // #define MODEL_STATIC_TENSOR_ARENA
 #define MODEL_USE_PSRAM
-
 // #define MODEL_DEBUG_RAM
 
 #ifdef MODEL_DEBUG_RAM

@@ -102,8 +102,6 @@ namespace CamConfig
             return false;
         }
 
-        CamOpt::updateExposure();
-
         Serial.println("Getting initial frame buffers.");
         for (size_t i = 0; i < 3; i++)
         {

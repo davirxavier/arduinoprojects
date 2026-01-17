@@ -10,12 +10,12 @@
 
 #include <WebSocketsServer.h>
 #include <esp-config-page.h>
-// #include <FTPFilesystem.h>
-// #include <ESP-FTP-Server-Lib.h>
+#include <FTPFilesystem.h>
+#include <ESP-FTP-Server-Lib.h>
 #include <general/secrets.h>
 #include <general/cam_config.h>
 
-// FTPServer ftp;
+FTPServer ftp;
 WebServer server(8080);
 
 namespace ConfigPageSetup
@@ -73,16 +73,16 @@ namespace ConfigPageSetup
         mjpegStreamHandle();
         server.begin();
 
-        // ftp.addUser(username, password);
-        // ftp.addFilesystem("SD", &SD_MMC);
-        // ftp.begin();
+        ftp.addUser(username, password);
+        ftp.addFilesystem("SD", &SD_MMC);
+        ftp.begin();
     }
 
     inline void configPageLoop()
     {
         ESP_CONFIG_PAGE::loop();
         server.handleClient();
-        // ftp.handle();
+        ftp.handle();
 
         if (!streamActive)
         {

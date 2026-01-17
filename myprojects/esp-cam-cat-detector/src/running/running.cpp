@@ -22,13 +22,14 @@ volatile bool inferenceOn = false;
 
 unsigned long luminosityUpdateInterval = 30 * 60 * 1000;
 unsigned long luminosityReadTimer = 0;
-uint32_t currentLuminosity = UINT32_MAX;
+float currentLuminosity = UINT32_MAX;
 
 volatile bool doAction = false;
 
 void updateLuminosity()
 {
     currentLuminosity = readLuminosity();
+    CamOpt::updateExposure(currentLuminosity);
     luminosityReadTimer = millis();
 }
 
@@ -201,14 +202,15 @@ void setup()
 #endif
 
     setupPins();
-    updateLuminosity();
 
     WiFi.setSleep(WIFI_PS_NONE);
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    camConfig.frame_size = FRAMESIZE_VGA;
+    camConfig.frame_size = FRAMESIZE_240X240;
     cameraInit = CamConfig::initCamera();
-    // CamConfig::initSdCard();
+    CamConfig::initSdCard();
+
+    updateLuminosity();
 
     int modelInitRes = ModelUtil::loadModel();
     if (modelInitRes != ModelUtil::OK)

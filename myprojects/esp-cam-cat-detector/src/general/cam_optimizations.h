@@ -23,15 +23,15 @@
 #include <Arduino.h>
 #include <esp_camera.h>
 
-#define OV2640_MAXLEVEL_SHARPNESS 6
-#define OV2640_DAY_LIGHT_LEVEL 140
-
 namespace CamOpt
 {
-    inline void updateExposure()
+    inline void updateExposure(float luminosity)
     {
         sensor_t* s = esp_camera_sensor_get();
-        constexpr int dayValue = 140;
+
+        // Clamp for safety
+        if (luminosity < 0.0f) luminosity = 0.0f;
+        if (luminosity > 1.0f) luminosity = 1.0f;
 
         // --- Default sensor settings ---
         s->set_whitebal(s, 1);
@@ -49,44 +49,56 @@ namespace CamOpt
         s->set_dcw(s, 0);
         s->set_colorbar(s, 0);
 
-        // --- Select sensor bank 1 for exposure/light registers ---
-        s->set_reg(s, 0xff, 0xff, 0x01);
-        uint8_t light = s->get_reg(s, 0x2f, 0xff);
-        Serial.print("Measured light: ");
-        Serial.println(light);
+        Serial.print("Linearized luminosity: ");
+        Serial.println(luminosity, 3);
 
-        if (light < dayValue)
+        // --- Select sensor bank 1 ---
+        s->set_reg(s, 0xff, 0xff, 0x01);
+
+        // ========= NIGHT / LOW LIGHT =========
+        if (luminosity < 0.30f)
         {
-            // --- Night mode ---
-            if (light < 45)
+            // Very dark → aggressive exposure
+            if (luminosity < 0.10f)
             {
-                s->set_reg(s, 0x11, 0xff, 1); // slower frame rate = longer exposure
+                s->set_reg(s, 0x11, 0xff, 1); // slower frame rate
             }
 
             s->set_reg(s, 0x13, 0xff, 0); // manual exposure/gain
             s->set_reg(s, 0x0c, 0x6, 0x8); // manual banding
-            s->set_reg(s, 0x45, 0x3f, 0x3f); // max exposure attempt
+            s->set_reg(s, 0x45, 0x3f, 0x3f); // max exposure
             s->set_reg(s, 0x43, 0xff, 0x40); // speed up frame processing
         }
         else
         {
-            // --- Daylight mode ---
-            // Map light [dayValue..255] → frame length / line adjust
-            uint16_t frameLength = map(light, dayValue, 255, 0x400, 0x0); // MSB: 0x47, LSB: 0x46
-            uint8_t lineAdjust = map(light, dayValue, 255, 0xf0, 0x0); // 0x2a/0x2b
+            // ========= DAYLIGHT =========
+            // Map luminosity [0.30 .. 1.0] → exposure reduction
+            uint16_t frameLength = map(
+                luminosity * 1000,
+                300, 1000,
+                0x400, // longer exposure
+                0x020 // very short exposure
+            );
+
+            uint8_t lineAdjust = map(
+                luminosity * 1000,
+                300, 1000,
+                0xF0,
+                0x00
+            );
 
             s->set_reg(s, 0x46, 0xff, frameLength & 0xFF); // LSB
             s->set_reg(s, 0x47, 0xff, frameLength >> 8); // MSB
             s->set_reg(s, 0x2a, 0xff, lineAdjust); // line adjust MSB
-            s->set_reg(s, 0x2b, 0xff, 0xff); // line adjust LSB (full)
+            s->set_reg(s, 0x2b, 0xff, 0xff); // line adjust LSB
             s->set_reg(s, 0x45, 0xff, 0x10); // base exposure
             s->set_reg(s, 0x11, 0xff, 0x0); // normal frame rate
             s->set_reg(s, 0x43, 0xff, 0x11); // restore default
         }
 
-        // --- Return to bank 0 and finalize ---
+        // --- Return to bank 0 ---
         s->set_reg(s, 0xff, 0xff, 0x00);
-        s->set_reg(s, 0xd3, 0xff, 0x8); // clock
+        s->set_reg(s, 0xd3, 0xff, 0x08); // clock
     }
 }
 
