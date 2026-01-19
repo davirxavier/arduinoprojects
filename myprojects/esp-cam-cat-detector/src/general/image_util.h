@@ -4,7 +4,6 @@
 
 namespace JPEG_DECODE_UTIL
 {
-
     struct DecodeContext
     {
         uint8_t* buf = nullptr;
@@ -20,19 +19,21 @@ namespace JPEG_DECODE_UTIL
         INVALID_BUFFER,
     };
 
-    inline uint8_t rgb_to_gray(uint8_t r, uint8_t g, uint8_t b) {
+    inline uint8_t rgb_to_gray(uint8_t r, uint8_t g, uint8_t b)
+    {
         return (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
     }
 
-    inline void rgb_to_bgr888(uint8_t* buffer, size_t length)
+    inline void rgb_bgr_swap(uint8_t* buffer, size_t length)
     {
         if (!buffer || length < 3) return;
 
         // Must be a multiple of 3 bytes per pixel
         size_t pixels = length / 3;
 
-        for (size_t i = 0; i < pixels; i++) {
-            uint8_t* p = buffer + i*3;
+        for (size_t i = 0; i < pixels; i++)
+        {
+            uint8_t* p = buffer + i * 3;
 
             uint8_t r = p[0];
             uint8_t g = p[1];
@@ -53,8 +54,8 @@ namespace JPEG_DECODE_UTIL
             return 0;
         }
 
-        auto *context = (DecodeContext*) pDraw->pUser;
-        uint8_t *currentBuf = context->buf;
+        auto* context = (DecodeContext*)pDraw->pUser;
+        uint8_t* currentBuf = context->buf;
         size_t currentBufSize = context->bufLen;
         int currentWidth = context->imageWidth;
 
@@ -149,7 +150,108 @@ namespace IMAGE_UTIL
 
     JPEGDEC jpegdec;
 
-    inline void crop_resize_square_bgr_inplace(uint8_t* src, int src_w, int src_h, int dst_w, int dst_h) {
+    typedef struct
+    {
+        uint8_t b;
+        uint8_t g;
+        uint8_t r;
+    } BGR;
+
+    static inline void set_pixel(
+        uint8_t* img,
+        int x,
+        int y,
+        BGR c
+    )
+    {
+        int idx = (y * 96 + x) * 3;
+        img[idx + 0] = c.b;
+        img[idx + 1] = c.g;
+        img[idx + 2] = c.r;
+    }
+
+    inline void draw_cross(
+        uint8_t* img,
+        int imgWidth,
+        int imgHeight,
+        int cx,
+        int cy,
+        BGR c,
+        int size = 4, // half-length of arms
+        int thickness = 1 // line thickness
+    )
+    {
+        if (thickness <= 0)
+            return;
+
+        int half = thickness / 2;
+
+        for (int i = -size; i <= size; ++i)
+        {
+            // horizontal arm
+            for (int t = -half; t <= half; ++t)
+            {
+                int x = cx + i;
+                int y = cy + t;
+
+                if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
+                    set_pixel(img, x, y, c);
+            }
+
+            // vertical arm
+            for (int t = -half; t <= half; ++t)
+            {
+                int x = cx + t;
+                int y = cy + i;
+
+                if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
+                    set_pixel(img, x, y, c);
+            }
+        }
+    }
+
+    inline void draw_circle(
+        uint8_t* img,
+        int imgWidth,
+        int imgHeight,
+        int cx,
+        int cy,
+        BGR c,
+        int size = 12, // outer radius
+        int thickness = 1 // outline thickness
+    )
+    {
+        if (thickness <= 0)
+            return;
+
+        if (thickness > size)
+            thickness = size;
+
+        const int outer2 = size * size;
+        const int innerRadius = size - thickness;
+        const int inner2 = innerRadius * innerRadius;
+
+        for (int dy = -size; dy <= size; ++dy)
+        {
+            for (int dx = -size; dx <= size; ++dx)
+            {
+                int d2 = dx * dx + dy * dy;
+
+                // keep only pixels in the ring
+                if (d2 < inner2 || d2 > outer2)
+                    continue;
+
+                int x = cx + dx;
+                int y = cy + dy;
+
+                if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
+                    set_pixel(img, x, y, c);
+            }
+        }
+    }
+
+    inline void crop_resize_square_bgr_inplace(uint8_t* src, int src_w, int src_h, int dst_w, int dst_h)
+    {
         // Determine square crop (fit shortest axis)
         int crop_size = src_w < src_h ? src_w : src_h;
         int x_offset = (src_w - crop_size) / 2;
@@ -159,23 +261,27 @@ namespace IMAGE_UTIL
         float y_ratio = (float)(crop_size - 1) / (dst_h - 1);
 
         // We write the output directly to src (overwrite top-left)
-        for (int y = 0; y < dst_h; y++) {
+        for (int y = 0; y < dst_h; y++)
+        {
             float fy = y * y_ratio;
             int y0 = (int)fy;
             int y1 = y0 + 1 < crop_size ? y0 + 1 : y0;
             float wy = fy - y0;
 
-            for (int x = 0; x < dst_w; x++) {
+            for (int x = 0; x < dst_w; x++)
+            {
                 float fx = x * x_ratio;
                 int x0 = (int)fx;
                 int x1 = x0 + 1 < crop_size ? x0 + 1 : x0;
                 float wx = fx - x0;
 
-                for (int c = 0; c < 3; c++) { // B, G, R channels
+                for (int c = 0; c < 3; c++)
+                {
+                    // B, G, R channels
                     float val = (1 - wx) * (1 - wy) * src[((y0 + y_offset) * src_w + (x0 + x_offset)) * 3 + c] +
-                                wx * (1 - wy) * src[((y0 + y_offset) * src_w + (x1 + x_offset)) * 3 + c] +
-                                (1 - wx) * wy * src[((y1 + y_offset) * src_w + (x0 + x_offset)) * 3 + c] +
-                                wx * wy * src[((y1 + y_offset) * src_w + (x1 + x_offset)) * 3 + c];
+                        wx * (1 - wy) * src[((y0 + y_offset) * src_w + (x1 + x_offset)) * 3 + c] +
+                        (1 - wx) * wy * src[((y1 + y_offset) * src_w + (x0 + x_offset)) * 3 + c] +
+                        wx * wy * src[((y1 + y_offset) * src_w + (x1 + x_offset)) * 3 + c];
                     src[(y * dst_w + x) * 3 + c] = (uint8_t)(val + 0.5f);
                 }
             }
@@ -184,7 +290,7 @@ namespace IMAGE_UTIL
 
 #define crop_desired_size_to_limit(pos, dsiz, siz) (((pos + dsiz) >= siz) ? (siz - pos) : dsiz)
 
-    inline Status getImageDimensions(uint8_t *buf, size_t bufSize, ImageDimensions *dimensions)
+    inline Status getImageDimensions(uint8_t* buf, size_t bufSize, ImageDimensions* dimensions)
     {
         if (!jpegdec.openRAM(buf, bufSize, nullptr))
         {
@@ -198,7 +304,7 @@ namespace IMAGE_UTIL
     }
 
     inline Status alignToMcu(uint8_t* image, size_t len,
-                          int &x, int &y, int &width, int &height)
+                             int& x, int& y, int& width, int& height)
     {
         if (!jpegdec.openRAM(image, len, nullptr))
             return OPEN_JPEG_ERROR;
@@ -210,16 +316,20 @@ namespace IMAGE_UTIL
         {
         case 0x00: // grayscale
         case 0x11: // 4:4:4
-            mcuW = 8;  mcuH = 8;
+            mcuW = 8;
+            mcuH = 8;
             break;
         case 0x12: // 4:2:2 vertical
-            mcuW = 8;  mcuH = 16;
+            mcuW = 8;
+            mcuH = 16;
             break;
         case 0x21: // 4:2:2 horizontal
-            mcuW = 16; mcuH = 8;
+            mcuW = 16;
+            mcuH = 8;
             break;
         case 0x22: // 4:2:0
-            mcuW = 16; mcuH = 16;
+            mcuW = 16;
+            mcuH = 16;
             break;
         }
 
@@ -229,7 +339,7 @@ namespace IMAGE_UTIL
         // Clamp input first
         if (x < 0) x = 0;
         if (y < 0) y = 0;
-        if (x + width  > imgW) width  = imgW - x;
+        if (x + width > imgW) width = imgW - x;
         if (y + height > imgH) height = imgH - y;
 
         // Align DOWN
@@ -237,7 +347,7 @@ namespace IMAGE_UTIL
         int ay = (y / mcuH) * mcuH;
 
         // Align UP using *clipped* end values
-        int bx = ((x + width  + mcuW - 1) / mcuW) * mcuW;
+        int bx = ((x + width + mcuW - 1) / mcuW) * mcuW;
         int by = ((y + height + mcuH - 1) / mcuH) * mcuH;
 
         // clamp AFTER we recomputed aligned coords
@@ -245,9 +355,9 @@ namespace IMAGE_UTIL
         if (by > imgH) by = imgH;
 
         // Aligned rectangle
-        x      = ax;
-        y      = ay;
-        width  = bx - ax;
+        x = ax;
+        y = ay;
+        width = bx - ax;
         height = by - ay;
 
         jpegdec.close();
@@ -283,7 +393,7 @@ namespace IMAGE_UTIL
         {
             return dimRet;
         }
-        *out = (unsigned int) dim.width * dim.height * 3;
+        *out = (unsigned int)dim.width * dim.height * 3;
         return OK;
     }
 
@@ -342,7 +452,7 @@ namespace IMAGE_UTIL
     }
 
     // out buffer should always be width * height * 3 of length
-    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t *out, bool outputBGR = false)
+    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t* out, bool outputBGR = false)
     {
         ImageDimensions dimensions{};
         Status res = getImageDimensions(image, imageLen, &dimensions);

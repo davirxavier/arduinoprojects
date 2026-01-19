@@ -12,8 +12,10 @@
 
 #define AVERAGING_WINDOW 3
 #define INFERENCE_THRESHOLD 0.7f
+#define DETECTION_FOLDER "/detections"
 
 volatile bool cameraInit = false;
+volatile bool sdInit = false;
 bool timeInit = false;
 
 unsigned long inferenceTimer = 0;
@@ -29,7 +31,7 @@ volatile bool doAction = false;
 void updateLuminosity()
 {
     currentLuminosity = readLuminosity();
-    CamOpt::updateExposure(currentLuminosity);
+    // CamOpt::updateExposure(currentLuminosity);
     luminosityReadTimer = millis();
 }
 
@@ -62,18 +64,30 @@ void inferenceTask(void *args)
             {
                 doAction = true;
                 MLOGF("Average %f is higher than threshold, triggering.\n", average);
+
+                if (sdInit)
+                {
+                    tm info{};
+                    timeInit = getLocalTime(&info);
+
+                    char nameBuf[128]{};
+                    snprintf(nameBuf,
+                        sizeof(nameBuf),
+                        "%s/%d_%d_%d__%d_%d_%d__%f.jpeg",
+                        DETECTION_FOLDER,
+                        info.tm_year,
+                        info.tm_mon,
+                        info.tm_mday,
+                        info.tm_hour,
+                        info.tm_min,
+                        info.tm_sec,
+                        average);
+
+                    SD_MMC.open(nameBuf, FILE_WRITE);
+                }
             }
 
             esp_camera_fb_return(fb);
-        }
-        else if (!cameraInit)
-        {
-            MLOGN("Camera not initialized, trying again.");
-            cameraInit = CamConfig::initCamera();
-            if (!cameraInit)
-            {
-                MLOGN("Error re-initializing camera.");
-            }
         }
 
         vTaskDelayUntil(&lastWake, interval);
@@ -128,11 +142,14 @@ void handleServerUpload()
         auto src = (uint8_t*) ps_malloc(srcSize);
         fmt2rgb888(buffer, uploadOffset, PIXFORMAT_JPEG, src);
 
+        uint8_t *outImg = nullptr;
+        size_t outImgSize = 0;
+
         InferenceUtil::InferenceOutput result{};
-        InferenceUtil::runInferenceFromImage(result, buffer, uploadOffset);
+        InferenceUtil::runInferenceFromImage(result, buffer, uploadOffset, &outImg, &outImgSize);
         if (result.status == 0)
         {
-            char buf[256] = "Objects found:\n";
+            char buf[256]{};
             char numBuf[16]{};
 
             for (size_t i = 0; i < result.count; i++)
@@ -151,13 +168,28 @@ void handleServerUpload()
                 strcat(buf, ", y=");
                 strcat(buf, numBuf);
 
-                strcat(buf, "\n");
+                strcat(buf, "; ");
             }
 
             snprintf(numBuf, sizeof(numBuf), "%f", InferenceUtil::triggerCertainty(result));
             strcat(buf, "Should trigger certainty: ");
             strcat(buf, numBuf);
-            server.send(200, "text/plain", buf);
+
+            snprintf(numBuf, sizeof(numBuf), "%lu", result.totalLatency);
+            strcat(buf, "; latency=");
+            strcat(buf, numBuf);
+            strcat(buf, "ms");
+
+            server.sendHeader("x-result", buf);
+            InferenceUtil::drawMarkers(result, outImg);
+
+            uint8_t *jpegOut = nullptr;
+            size_t jpegOutSize = 0;
+            fmt2jpg(outImg, outImgSize, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 200, &jpegOut, &jpegOutSize);
+            free(outImg);
+
+            server.send_P(200, "image/jpeg", (char*) jpegOut, jpegOutSize);
+            free(jpegOut);
         }
         else
         {
@@ -206,9 +238,12 @@ void setup()
     WiFi.setSleep(WIFI_PS_NONE);
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    camConfig.frame_size = FRAMESIZE_240X240;
+    camConfig.frame_size = FRAMESIZE_VGA;
     cameraInit = CamConfig::initCamera();
-    CamConfig::initSdCard();
+    CamConfig::setRes(FRAMESIZE_QVGA);
+    MLOGF("Free PSRAM after camera init: %lu\n", ESP.getFreePsram());
+
+    // CamConfig::initSdCard();
 
     updateLuminosity();
 
@@ -253,6 +288,7 @@ void setup()
 
         server.sendHeader("x-result", InferenceUtil::currentOutput);
         esp_camera_fb_return(fb);
+        InferenceUtil::drawMarkers(result, outImg);
 
         uint8_t *outJpeg = nullptr;
         size_t outJpegSize = 0;

@@ -2,8 +2,10 @@
 // Created by xav on 12/4/25.
 //
 
-// #define ESP32_CONP_OTA_USE_WEBSOCKETS
+#define ESP32_CONP_OTA_USE_WEBSOCKETS
+// #define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#include "inference_util.h"
 
 #ifndef CONFIG_PAGE_SETUP_H
 #define CONFIG_PAGE_SETUP_H
@@ -20,6 +22,10 @@ WebServer server(8080);
 
 namespace ConfigPageSetup
 {
+    inline int maxFps = 20;
+    inline framesize_t maxFramesize = FRAMESIZE_VGA;
+    inline framesize_t defaultFramesize = camConfig.frame_size;
+
     inline int frameIntervalMs = (1000 / 1);
     inline unsigned long lastFrameSent = 0;
     inline WiFiClient currentClient;
@@ -27,7 +33,7 @@ namespace ConfigPageSetup
 
     inline void mjpegStreamHandle()
     {
-        server.on("/stream", []()
+        server.on("/stream", HTTP_GET, []()
         {
             VALIDATE_AUTH();
 
@@ -37,6 +43,21 @@ namespace ConfigPageSetup
                 MLOGN("Stream already in use");
                 server.send(503, "text/plain", "stream already in use.");
                 return;
+            }
+
+            if (server.hasArg("framesize"))
+            {
+                int framesize = server.arg("framesize").toInt();
+                if (framesize >= 0 && framesize <= maxFramesize)
+                {
+                    CamConfig::setRes((framesize_t) framesize);
+                }
+            }
+
+            int fps = server.arg("fps").toInt();
+            if (fps > 0 && fps <= maxFps)
+            {
+                frameIntervalMs = 1000 / fps;
             }
 
             streamActive = true;
@@ -70,7 +91,14 @@ namespace ConfigPageSetup
         ESP_CONFIG_PAGE::setAPConfig(nodeName, password);
         ESP_CONFIG_PAGE::initModules(&server, username, password, nodeName);
 
+        defaultFramesize = camConfig.frame_size;
         mjpegStreamHandle();
+
+        ESP_CONFIG_PAGE::otaStartCallback = []()
+        {
+            esp_camera_deinit();
+        };
+
         server.begin();
 
         ftp.addUser(username, password);
@@ -94,6 +122,7 @@ namespace ConfigPageSetup
             streamActive = false;
             currentClient.stop();
             MLOGN("Stream client disconnected");
+            CamConfig::setRes(defaultFramesize);
             return;
         }
 

@@ -45,7 +45,7 @@ inline float linearizeLum(uint32_t raw)
     float x = normalizeLum(raw);
 
     // Log curve: expands darks, compresses brights
-    constexpr float K = 9.0f;   // curve strength (6–12 typical)
+    constexpr float K = 6.0f;   // curve strength (6–12 typical)
     return log1p(K * x) / log1p(K);
 }
 
@@ -61,8 +61,9 @@ inline float readLuminosity()
         delay(5);
     }
     lumAverage /= averageCount;
-
-    Serial.printf("Luminosity: %lu\n", lumAverage);
+    Serial.printf("Raw Luminosity: %lu\n", lumAverage);
+    Serial.printf("Normalized Luminosity: %f\n", normalizeLum(lumAverage));
+    Serial.printf("Linearized Luminosity: %f\n", linearizeLum(lumAverage));
 
     esp_wifi_start();
     return linearizeLum(lumAverage);
@@ -70,7 +71,7 @@ inline float readLuminosity()
 
 inline void toggleFlash(bool on)
 {
-    digitalWrite(CAM_FLASH_PIN, on ? HIGH : LOW);
+    // digitalWrite(CAM_FLASH_PIN, on ? HIGH : LOW);
 }
 
 inline camera_fb_t *getFrameWithFlash()
@@ -85,7 +86,7 @@ inline camera_fb_t *getFrameWithFlash()
 
 inline void setupPins()
 {
-    pinMode(3, OUTPUT);
+    pinMode(CAM_FLASH_PIN, OUTPUT);
     toggleFlash(false);
 
     pinMode(ACTION_PIN, OUTPUT);

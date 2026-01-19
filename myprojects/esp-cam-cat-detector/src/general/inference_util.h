@@ -38,6 +38,22 @@ namespace InferenceUtil
     constexpr uint8_t humanIndex = 2;
     inline unsigned long currentStartTimer = 0;
 
+    static const IMAGE_UTIL::BGR classColors[MAX_BOXES + 1] = {
+        {  0,   0,   0 },   // 0 - unused
+
+        {255, 255,   0 },   // 1 - Blue
+        {  0, 255,   0 },   // 2 - Green
+        {  0,   0, 255 },   // 3 - Red
+        { 255,   0,   0 },  // 4 - Cyan
+        {255,   0, 255 },   // 5 - Magenta
+        {  0, 255, 255 },   // 6 - Yellow
+
+        {128,   0, 255 },   // 7 - Purple
+        {255, 128,   0 },   // 8 - Orange
+        {  0, 128, 255 },   // 9 - Light Red / Pink
+        {128, 255,   0 }    // 10 - Lime
+    };
+
 #ifdef INFERENCE_ENABLE_LOG
     constexpr size_t currentOutputLen = 1024;
     inline char currentOutput[currentOutputLen]{};
@@ -49,6 +65,7 @@ namespace InferenceUtil
 
     struct InferenceValues
     {
+        int classId = -1;
         char label[MAX_LABEL_LENGTH]{};
         float value = 0;
         float x = 0;
@@ -194,21 +211,22 @@ namespace InferenceUtil
         return true;
     }
 
-    inline int runClassifierAndExtractInfo(const uint8_t* imageBuffer, InferenceOutput &output)
+    inline int runClassifierAndExtractInfo(const uint8_t* imageBuffer, InferenceOutput& output)
     {
         INFERENCE_LOG_FN("Running inference.");
 
-        uint8_t *outputBuffer = nullptr;
-        int resultStatus = ModelUtil::runInference(&outputBuffer, [imageBuffer](uint8_t *dst)
+        uint8_t* outputBuffer = nullptr;
+        int resultStatus = ModelUtil::runInference(&outputBuffer, [imageBuffer](uint8_t* dst)
         {
-            for (int i = 0; i < MODEL_DATA_INPUT_WIDTH * MODEL_DATA_INPUT_HEIGHT; i++) {
-                uint8_t b = imageBuffer[3*i + 0];
-                uint8_t g = imageBuffer[3*i + 1];
-                uint8_t r = imageBuffer[3*i + 2];
+            for (int i = 0; i < MODEL_DATA_INPUT_WIDTH * MODEL_DATA_INPUT_HEIGHT; i++)
+            {
+                uint8_t b = imageBuffer[3 * i + 0];
+                uint8_t g = imageBuffer[3 * i + 1];
+                uint8_t r = imageBuffer[3 * i + 2];
 
-                dst[3*i + 0] = r;  // BGR → RGB
-                dst[3*i + 1] = g;
-                dst[3*i + 2] = b;
+                dst[3 * i + 0] = r; // BGR → RGB
+                dst[3 * i + 1] = g;
+                dst[3 * i + 2] = b;
             }
         });
 
@@ -239,19 +257,21 @@ namespace InferenceUtil
                     }
 
                     InferenceValues values{};
+                    values.classId = ci;
                     values.value = value;
                     values.x = (j + 0.5f) * MODEL_DOWNSCALING_FACTOR;
                     values.y = (i + 0.5f) * MODEL_DOWNSCALING_FACTOR;
                     snprintf(values.label, MAX_LABEL_LENGTH, "%s", classes[ci]);
 
-                    INFERENCE_LOG_FN("Found object of class %d at cell with value %f at row/col=%d/%d, calculated x/y=%f/%f",
-                             true,
-                             ci,
-                             value,
-                             i,
-                             j,
-                             values.x,
-                             values.y);
+                    INFERENCE_LOG_FN(
+                        "Found object of class %d at cell with value %f at row/col=%d/%d, calculated x/y=%f/%f",
+                        true,
+                        ci,
+                        value,
+                        i,
+                        j,
+                        values.x,
+                        values.y);
 
                     output.add(values);
                 }
@@ -263,7 +283,7 @@ namespace InferenceUtil
     }
 
     inline void runInferenceFromImage(
-        InferenceOutput &output,
+        InferenceOutput& output,
         uint8_t* image,
         size_t imageLen,
         uint8_t** outProcessed = nullptr,
@@ -287,7 +307,7 @@ namespace InferenceUtil
             return;
         }
 
-        auto decodeBuffer = (uint8_t*) ps_malloc(decodeBufferSize);
+        auto decodeBuffer = (uint8_t*)ps_malloc(decodeBufferSize);
         if (decodeBuffer == nullptr)
         {
             INFERENCE_ERROR_FN("Failed to allocate decode buffer.", -55, output);
@@ -327,7 +347,7 @@ namespace InferenceUtil
         }
     }
 
-    inline float triggerCertainty(const InferenceOutput &output)
+    inline float triggerCertainty(const InferenceOutput& output)
     {
         if (output.count == 0)
         {
@@ -337,8 +357,10 @@ namespace InferenceUtil
         float maxCatConfidence = 0.0f;
         float maxHumanConfidence = 0.0f;
 
-        for (const InferenceValues &values : output.foundValues)
+        for (size_t i = 0; i < output.count; i++)
         {
+            const InferenceValues &values = output.foundValues[i];
+
             if (strcmp(values.label, classes[catIndex]) == 0)
             {
                 maxCatConfidence = std::max(maxCatConfidence, values.value);
@@ -355,6 +377,20 @@ namespace InferenceUtil
         // Trigger certainty:
         // high when cat is strong and human is weak
         return maxCatConfidence * (1.0f - maxHumanConfidence); // [0.0, 1.0]
+    }
+
+    inline void drawMarkers(const InferenceOutput &output, uint8_t *img)
+    {
+        for (size_t i = 0; i < output.count; i++)
+        {
+            const InferenceValues &values = output.foundValues[i];
+            if (values.classId > 0 && values.value >= thresholds[values.classId])
+            {
+                IMAGE_UTIL::BGR c = classColors[values.classId];
+                IMAGE_UTIL::draw_cross(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 8);
+                IMAGE_UTIL::draw_circle(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 3);
+            }
+        }
     }
 }
 
