@@ -293,13 +293,14 @@ namespace InferenceUtil
 
         INFERENCE_LOG_FN("Converting picture");
         IMAGE_UTIL::ImageDimensions dimensions;
-        int imageDimensionsResult = IMAGE_UTIL::getImageDimensions(image, imageLen, &dimensions);
-        if (imageDimensionsResult != IMAGE_UTIL::OK)
+        bool imageDimensionsResult = IMAGE_UTIL::jpegGetSize(image, imageLen, dimensions);
+        if (!imageDimensionsResult)
         {
             INFERENCE_ERROR_FN("Error opening image", -imageDimensionsResult, output);
             return;
         }
 
+        Serial.printf("Extracted input dimensions are (w/h): %d / %d\n", dimensions.width, dimensions.height);
         size_t decodeBufferSize = dimensions.width * dimensions.height * 3;
         if (decodeBufferSize > MAX_INFERENCE_DECODE_LENGTH)
         {

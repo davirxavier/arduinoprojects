@@ -1,7 +1,5 @@
 #pragma once
 
-#include <JPEGDEC.h>
-
 namespace JPEG_DECODE_UTIL
 {
     struct DecodeContext
@@ -45,81 +43,6 @@ namespace JPEG_DECODE_UTIL
             p[2] = r;
         }
     }
-
-    inline int decodeFn(JPEGDRAW* pDraw)
-    {
-        if (pDraw->pUser == nullptr)
-        {
-            Serial.println("No pUser set to decode.");
-            return 0;
-        }
-
-        auto* context = (DecodeContext*)pDraw->pUser;
-        uint8_t* currentBuf = context->buf;
-        size_t currentBufSize = context->bufLen;
-        int currentWidth = context->imageWidth;
-
-        const int bytesPerPixel = pDraw->iBpp / 8; // 2 for RGB565, 4 for ARGB8888
-
-        // Loop each row of the current MCU
-        for (int row = 0; row < pDraw->iHeight; ++row)
-        {
-            int dstY = pDraw->y + row;
-            int dstX = pDraw->x;
-
-            // Use iWidthUsed for right-edge MCUs
-            int copyWidth = (pDraw->iWidthUsed > 0) ? pDraw->iWidthUsed : pDraw->iWidth;
-
-            if (bytesPerPixel == 4)
-            {
-                size_t dstOffset = ((size_t)dstY * currentWidth + dstX) * 3; // RGB888 is 3 bytes
-                size_t srcOffset = ((size_t)row * pDraw->iWidth) * bytesPerPixel;
-
-                uint8_t* src = (uint8_t*)pDraw->pPixels + srcOffset;
-                uint8_t* dst = currentBuf + dstOffset;
-
-                for (int col = 0; col < copyWidth; ++col)
-                {
-                    if (context->outputBGR)
-                    {
-                        uint8_t r = src[col * 4 + 0];
-                        uint8_t g = src[col * 4 + 1];
-                        uint8_t b = src[col * 4 + 2];
-
-                        dst[col * 3 + 0] = b;
-                        dst[col * 3 + 1] = g;
-                        dst[col * 3 + 2] = r;
-                    }
-                    else
-                    {
-                        uint8_t r = src[col * 4 + 0];
-                        uint8_t g = src[col * 4 + 1];
-                        uint8_t b = src[col * 4 + 2];
-
-                        dst[col * 3 + 0] = r;
-                        dst[col * 3 + 1] = g;
-                        dst[col * 3 + 2] = b;
-                    }
-                }
-            }
-            else
-            {
-                size_t dstOffset = ((size_t)dstY * currentWidth + dstX) * bytesPerPixel;
-                size_t srcOffset = ((size_t)row * pDraw->iWidth) * bytesPerPixel;
-                size_t rowBytes = (size_t)copyWidth * bytesPerPixel;
-
-                if (dstOffset + rowBytes > currentBufSize)
-                {
-                    Serial.printf("Out-of-bounds avoided at (%d,%d)\n", dstX, dstY);
-                    return 0;
-                }
-
-                memcpy(currentBuf + dstOffset, (uint8_t*)pDraw->pPixels + srcOffset, rowBytes);
-            }
-        }
-
-        return 1;
-    }
 }
 
 namespace IMAGE_UTIL
@@ -134,21 +57,11 @@ namespace IMAGE_UTIL
         BUFFER_TOO_SMALL,
     };
 
-    enum JpegScale
-    {
-        SCALE_FULL = 0,
-        SCALE_HALF = JPEG_SCALE_HALF,
-        SCALE_QUARTER = JPEG_SCALE_QUARTER,
-        SCALE_EIGHTH = JPEG_SCALE_EIGHTH,
-    };
-
     struct ImageDimensions
     {
         int width = -1;
         int height = -1;
     };
-
-    JPEGDEC jpegdec;
 
     typedef struct
     {
@@ -288,198 +201,74 @@ namespace IMAGE_UTIL
         }
     }
 
-#define crop_desired_size_to_limit(pos, dsiz, siz) (((pos + dsiz) >= siz) ? (siz - pos) : dsiz)
-
-    inline Status getImageDimensions(uint8_t* buf, size_t bufSize, ImageDimensions* dimensions)
+    inline bool jpegGetSize(const uint8_t* data, uint32_t len, ImageDimensions& dims)
     {
-        if (!jpegdec.openRAM(buf, bufSize, nullptr))
+        if (!data || len < 4)
+            return false;
+
+        // SOI marker
+        if (data[0] != 0xFF || data[1] != 0xD8)
+            return false;
+
+        uint32_t i = 2; // skip SOI
+
+        while (i + 1 < len)
         {
-            return OPEN_JPEG_ERROR;
+            // Find marker prefix (0xFF)
+            if (data[i] != 0xFF)
+            {
+                ++i;
+                continue;
+            }
+
+            // Skip padding FF bytes
+            while (i < len && data[i] == 0xFF)
+                ++i;
+
+            if (i >= len)
+                return false;
+
+            uint8_t marker = data[i++];
+
+            // Standalone markers (no length field)
+            if (marker == 0xD8 || marker == 0xD9 ||           // SOI, EOI
+                (marker >= 0xD0 && marker <= 0xD7))           // RSTn
+            {
+                continue;
+            }
+
+            // Need at least a 2-byte length field
+            if (i + 1 >= len)
+                return false;
+
+            uint16_t size = (data[i] << 8) | data[i + 1];
+            if (size < 2)
+                return false;
+
+            // Ensure the full segment is inside the buffer
+            if (i + size - 2 >= len)
+                return false;
+
+            // SOF markers that contain image size
+            if (marker >= 0xC0 && marker <= 0xCF &&
+                marker != 0xC4 &&  // DHT
+                marker != 0xC8 &&  // JPG
+                marker != 0xCC)    // DAC
+            {
+                // Segment layout:
+                // [length(2)] [precision(1)] [height(2)] [width(2)] ...
+                if (size < 7)
+                    return false;
+
+                dims.height = (data[i + 3] << 8) | data[i + 4];
+                dims.width  = (data[i + 5] << 8) | data[i + 6];
+                return true;
+            }
+
+            // Skip this segment
+            i += size;
         }
 
-        dimensions->width = jpegdec.getWidth();
-        dimensions->height = jpegdec.getHeight();
-        jpegdec.close();
-        return OK;
-    }
-
-    inline Status alignToMcu(uint8_t* image, size_t len,
-                             int& x, int& y, int& width, int& height)
-    {
-        if (!jpegdec.openRAM(image, len, nullptr))
-            return OPEN_JPEG_ERROR;
-
-        int ss = jpegdec.getSubSample();
-        int mcuW = 8, mcuH = 8;
-
-        switch (ss)
-        {
-        case 0x00: // grayscale
-        case 0x11: // 4:4:4
-            mcuW = 8;
-            mcuH = 8;
-            break;
-        case 0x12: // 4:2:2 vertical
-            mcuW = 8;
-            mcuH = 16;
-            break;
-        case 0x21: // 4:2:2 horizontal
-            mcuW = 16;
-            mcuH = 8;
-            break;
-        case 0x22: // 4:2:0
-            mcuW = 16;
-            mcuH = 16;
-            break;
-        }
-
-        int imgW = jpegdec.getWidth();
-        int imgH = jpegdec.getHeight();
-
-        // Clamp input first
-        if (x < 0) x = 0;
-        if (y < 0) y = 0;
-        if (x + width > imgW) width = imgW - x;
-        if (y + height > imgH) height = imgH - y;
-
-        // Align DOWN
-        int ax = (x / mcuW) * mcuW;
-        int ay = (y / mcuH) * mcuH;
-
-        // Align UP using *clipped* end values
-        int bx = ((x + width + mcuW - 1) / mcuW) * mcuW;
-        int by = ((y + height + mcuH - 1) / mcuH) * mcuH;
-
-        // clamp AFTER we recomputed aligned coords
-        if (bx > imgW) bx = imgW;
-        if (by > imgH) by = imgH;
-
-        // Aligned rectangle
-        x = ax;
-        y = ay;
-        width = bx - ax;
-        height = by - ay;
-
-        jpegdec.close();
-        return OK;
-    }
-
-    inline Status calcRgb888FrameSize(
-        uint8_t* image,
-        size_t size,
-        int frameX,
-        int frameY,
-        int frameWidth,
-        int frameHeight,
-        size_t* out)
-    {
-        if (!jpegdec.openRAM(image, size, nullptr))
-        {
-            return OPEN_JPEG_ERROR;
-        }
-
-        int finalFrameWidth = crop_desired_size_to_limit(frameX, frameWidth, jpegdec.getWidth());
-        int finalFrameHeight = crop_desired_size_to_limit(frameY, frameHeight, jpegdec.getHeight());
-        *out = finalFrameWidth * finalFrameHeight * 3;
-        jpegdec.close();
-        return OK;
-    }
-
-    inline Status getRgb888ImageSize(uint8_t* image, size_t size, size_t* out)
-    {
-        ImageDimensions dim{};
-        Status dimRet = getImageDimensions(image, size, &dim);
-        if (dimRet != OK)
-        {
-            return dimRet;
-        }
-        *out = (unsigned int)dim.width * dim.height * 3;
-        return OK;
-    }
-
-    // Frame x, y, width and height should be multiples of 8, ex: 128 or 256 or 384
-    inline Status getImageFrameRgb888(
-        uint8_t* image,
-        size_t size,
-        int frameX,
-        int frameY,
-        int frameWidth,
-        int frameHeight,
-        uint8_t* out,
-        size_t outSize,
-        size_t* written,
-        int* outWidth,
-        int* outHeight,
-        JpegScale scale = SCALE_FULL)
-    {
-        if (!jpegdec.openRAM(image, size, nullptr))
-        {
-            return OPEN_JPEG_ERROR;
-        }
-
-        int imageWidth = jpegdec.getWidth();
-        int imageHeight = jpegdec.getHeight();
-
-        int finalFrameWidth = crop_desired_size_to_limit(frameX, frameWidth, imageWidth);
-        int finalFrameHeight = crop_desired_size_to_limit(frameY, frameHeight, imageHeight);
-
-        jpegdec.close();
-
-        JPEG_DECODE_UTIL::DecodeContext context{};
-        context.buf = out;
-        context.bufLen = outSize;
-        context.imageWidth = finalFrameWidth;
-
-        if (!jpegdec.openRAM(image, size, JPEG_DECODE_UTIL::decodeFn))
-        {
-            return OPEN_JPEG_ERROR;
-        }
-
-        jpegdec.setUserPointer(&context);
-        jpegdec.setPixelType(RGB8888);
-        jpegdec.setCropArea(frameX, frameY, finalFrameWidth, finalFrameHeight);
-
-        if (!jpegdec.decode(0, 0, scale))
-        {
-            Serial.printf("Decode error: %d\n", jpegdec.getLastError());
-            return DECODE_ERROR;
-        }
-
-        *outWidth = finalFrameWidth;
-        *outHeight = finalFrameHeight;
-        *written = (*outWidth) * (*outHeight) * 3;
-        return OK;
-    }
-
-    // out buffer should always be width * height * 3 of length
-    inline Status jpegToRgb888(uint8_t* image, size_t imageLen, uint8_t* out, bool outputBGR = false)
-    {
-        ImageDimensions dimensions{};
-        Status res = getImageDimensions(image, imageLen, &dimensions);
-        if (res != OK)
-        {
-            return res;
-        }
-
-        size_t bufSize = dimensions.width * dimensions.height * 3;
-        JPEG_DECODE_UTIL::DecodeContext context{};
-        context.buf = out;
-        context.bufLen = bufSize;
-        context.imageWidth = dimensions.width;
-        context.outputBGR = outputBGR;
-
-        if (!jpegdec.openRAM(image, imageLen, JPEG_DECODE_UTIL::decodeFn))
-        {
-            return OPEN_JPEG_ERROR;
-        }
-
-        jpegdec.setUserPointer(&context);
-        jpegdec.setPixelType(RGB8888);
-        if (!jpegdec.decode(0, 0, 0))
-        {
-            return DECODE_ERROR;
-        }
-
-        return OK;
+        return false;
     }
 }

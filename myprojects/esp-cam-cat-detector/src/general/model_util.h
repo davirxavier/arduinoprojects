@@ -22,7 +22,7 @@
 
 namespace ModelUtil
 {
-    constexpr size_t arenaSize = MODEL_DATA_MODEL_SIZE * 1.25;
+    constexpr size_t arenaSize = MODEL_DATA_MODEL_SIZE * 1.35;
     using InputCallback = std::function<void(uint8_t *inputBuffer)>;
 
     inline const tflite::Model *currentModel = nullptr;
