@@ -23,11 +23,9 @@ bool timeInit = false;
 
 unsigned long inferenceTimer = 0;
 unsigned long inferenceDelay = 800;
-volatile bool inferenceOn = true;
 
 unsigned long luminosityUpdateInterval = 30 * 60 * 1000;
 unsigned long luminosityReadTimer = 0;
-float currentLuminosity = UINT32_MAX;
 
 unsigned long saveEmptyImageInterval = 45 * 60 * 1000;
 unsigned long lastSavedEmptyImage = -saveEmptyImageInterval;
@@ -37,7 +35,7 @@ esp_jpeg_image_scale_t jpegScale = JPEG_IMAGE_SCALE_0;
 
 void updateLuminosity()
 {
-    currentLuminosity = readLuminosity();
+    IotProperties::setLuminosity(readLuminosity());
     luminosityReadTimer = millis();
 }
 
@@ -53,7 +51,7 @@ void inferenceTask(void *args)
 
     while (true)
     {
-        if (!cameraInit || !inferenceOn)
+        if (!cameraInit || !IotProperties::isInferenceOn())
         {
             delayTaskFn(lastWake, interval);
             continue;
@@ -285,7 +283,7 @@ void setup()
     server.on("/inf-toggle", HTTP_POST, []()
     {
         VALIDATE_AUTH();
-        inferenceOn = !inferenceOn;
+        IotProperties::toggleInference();
         server.send(200, "text/plain", "ok");
     });
 
@@ -324,7 +322,7 @@ void setup()
 
     handleServerUpload();
     ConfigPageSetup::setupConfigPage();
-    IotSetup::setup();
+    IotProperties::setup();
 
     MLOGN("Started.");
 
@@ -350,7 +348,7 @@ void setup()
 void loop()
 {
     ConfigPageSetup::configPageLoop();
-    IotSetup::loop();
+    IotProperties::loop();
 
     if (WiFi.status() == WL_CONNECTED)
     {
