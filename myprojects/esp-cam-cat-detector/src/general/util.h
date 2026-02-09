@@ -5,7 +5,6 @@
 #ifndef UTIL_H
 #define UTIL_H
 
-#define ENABLE_LOGGING
 #ifdef ENABLE_LOGGING
 #define MLOG(str) Serial.print(str)
 #define MLOGN(str) Serial.println(str)
@@ -26,13 +25,16 @@
 
 // gpio12 -> luminosity reading
 
-#define CAM_FLASH_PIN 3
-#define ACTION_PIN 4
-#define LUMINOSITY_PIN 12
+#define CAM_FLASH_PIN 47
+#define ACTION_PIN 21
+#define LUMINOSITY_PIN 1
+// #define LUM_AFFECTS_WIFI
 #include <esp_camera.h>
+#include <SD_MMC.h>
 
 constexpr uint32_t LUM_FLOOR = 128;
 constexpr uint32_t LUM_CEIL  = 2200;
+inline volatile bool sdInit = false;
 
 inline float normalizeLum(uint32_t raw)
 {
@@ -51,7 +53,9 @@ inline float linearizeLum(uint32_t raw)
 
 inline float readLuminosity()
 {
+#ifdef LUM_AFFECTS_WIFI
     esp_wifi_stop();
+#endif
 
     size_t averageCount = 5;
     uint32_t lumAverage = 0;
@@ -61,11 +65,13 @@ inline float readLuminosity()
         delay(5);
     }
     lumAverage /= averageCount;
-    Serial.printf("Raw Luminosity: %lu\n", lumAverage);
-    Serial.printf("Normalized Luminosity: %f\n", normalizeLum(lumAverage));
-    Serial.printf("Linearized Luminosity: %f\n", linearizeLum(lumAverage));
+    MLOGF("Raw Luminosity: %lu\n", lumAverage);
+    MLOGF("Normalized Luminosity: %f\n", normalizeLum(lumAverage));
+    MLOGF("Linearized Luminosity: %f\n", linearizeLum(lumAverage));
 
+#ifdef LUM_AFFECTS_WIFI
     esp_wifi_start();
+#endif
     return linearizeLum(lumAverage);
 }
 
@@ -100,6 +106,45 @@ inline void testRun()
     delay(500);
     digitalWrite(ACTION_PIN, LOW);
     toggleFlash(false);
+}
+
+inline void saveImg(camera_fb_t *fb, float average, const char *folder)
+{
+    vTaskDelay(1);
+
+    if (sdInit && (SD_MMC.totalBytes() - SD_MMC.usedBytes() + 32) > fb->len)
+    {
+        tm info{};
+        getLocalTime(&info);
+
+        char nameBuf[150]{};
+        snprintf(nameBuf,
+            sizeof(nameBuf),
+            "%s/%d_%d_%d__%d_%d_%d__a_%d.jpg",
+            folder,
+            info.tm_year + 1900,
+            info.tm_mon + 1,
+            info.tm_mday,
+            info.tm_hour,
+            info.tm_min,
+            info.tm_sec,
+            (int) (average * 100));
+
+        if (!SD_MMC.exists(folder))
+        {
+            SD_MMC.mkdir(folder);
+        }
+
+        MLOGF("Saving image to: %s\n", nameBuf);
+
+        File file = SD_MMC.open(nameBuf, FILE_WRITE);
+        file.write(fb->buf, fb->len);
+        file.close();
+    }
+    else
+    {
+        MLOGN("Can't save image, sd card not mounted or has no free space.");
+    }
 }
 
 class ActionController {

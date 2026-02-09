@@ -11,7 +11,7 @@
 #include "model_data.h"
 
 // #define MODEL_STATIC_TENSOR_ARENA
-#define MODEL_USE_PSRAM
+// #define MODEL_USE_PSRAM
 // #define MODEL_DEBUG_RAM
 
 #ifdef MODEL_DEBUG_RAM
@@ -22,7 +22,7 @@
 
 namespace ModelUtil
 {
-    constexpr size_t arenaSize = MODEL_DATA_MODEL_SIZE * 1.35;
+    constexpr size_t arenaSize = MODEL_DATA_MODEL_SIZE * 1.3;
     using InputCallback = std::function<void(uint8_t *inputBuffer)>;
 
     inline const tflite::Model *currentModel = nullptr;
@@ -35,7 +35,7 @@ namespace ModelUtil
 #endif
 
 #ifdef MODEL_STATIC_TENSOR_ARENA
-    inline uint8_t arena[arenaSize];
+    inline uint8_t IRAM_ATTR arena[arenaSize];
 #else
     inline uint8_t *arena = nullptr;
 #endif

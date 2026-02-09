@@ -7,6 +7,10 @@
 
 #include <general/cam_config.h>
 #include <general/image_util.h>
+#include <general/jpeg_util.h>
+
+// #define MODEL_STATIC_TENSOR_ARENA
+#define MODEL_USE_PSRAM
 #include "model_util.h"
 
 // #define INFERENCE_ENABLE_LOG
@@ -28,7 +32,7 @@
 #define MODEL_OUTPUT_COLS ((int) MODEL_DATA_INPUT_WIDTH/(int)MODEL_DOWNSCALING_FACTOR)
 #define MODEL_CLASS_COUNT 3
 #define MAX_LABEL_LENGTH 32
-#define MAX_INFERENCE_DECODE_LENGTH (1024 * 1000)
+#define MAX_INFERENCE_DECODE_LENGTH (1024 * 1000 * 4)
 
 namespace InferenceUtil
 {
@@ -78,6 +82,7 @@ namespace InferenceUtil
         size_t count = 0;
         int status = 0; // 0 = OK, less than 0 = Error
         unsigned long totalLatency = 0;
+        unsigned long inferenceLatency = 0;
 
         bool add(const InferenceValues& val)
         {
@@ -232,7 +237,7 @@ namespace InferenceUtil
 
         if (resultStatus != ModelUtil::OK)
         {
-            INFERENCE_ERROR_FN("Error running inference", resultStatus, *output);
+            INFERENCE_ERROR_FN("Error running inference", resultStatus, output);
             return resultStatus;
         }
 
@@ -287,7 +292,8 @@ namespace InferenceUtil
         uint8_t* image,
         size_t imageLen,
         uint8_t** outProcessed = nullptr,
-        size_t* outSize = nullptr)
+        size_t* outSize = nullptr,
+        esp_jpeg_image_scale_t jpegScale = JPEG_IMAGE_SCALE_0)
     {
         initOutputStr();
 
@@ -300,7 +306,10 @@ namespace InferenceUtil
             return;
         }
 
-        Serial.printf("Extracted input dimensions are (w/h): %d / %d\n", dimensions.width, dimensions.height);
+        INFERENCE_LOG_FN("Extracted input dimensions are (w/h): %d / %d", true, dimensions.width, dimensions.height);
+        IMAGE_UTIL::adjustDimensionsScale(dimensions, jpegScale);
+        INFERENCE_LOG_FN("Adjusted dims are (w/h): %d / %d", true, dimensions.width, dimensions.height);
+
         size_t decodeBufferSize = dimensions.width * dimensions.height * 3;
         if (decodeBufferSize > MAX_INFERENCE_DECODE_LENGTH)
         {
@@ -308,7 +317,7 @@ namespace InferenceUtil
             return;
         }
 
-        auto decodeBuffer = (uint8_t*)ps_malloc(decodeBufferSize);
+        auto decodeBuffer = (uint8_t*) ps_malloc(decodeBufferSize);
         if (decodeBuffer == nullptr)
         {
             INFERENCE_ERROR_FN("Failed to allocate decode buffer.", -55, output);
@@ -316,10 +325,10 @@ namespace InferenceUtil
         }
 
         memset(decodeBuffer, 0, decodeBufferSize);
-        bool decodeResult = fmt2rgb888(image, imageLen, PIXFORMAT_JPEG, decodeBuffer);
+        bool decodeResult = JPEG_UTIL::jpg2rgb888(image, imageLen, decodeBuffer, jpegScale);
         if (!decodeResult)
         {
-            INFERENCE_ERROR_FN("Error decoding image.", -1, output);
+            INFERENCE_ERROR_FN("Error decoding image", -1, output);
             return;
         }
 
@@ -333,9 +342,13 @@ namespace InferenceUtil
                 MODEL_DATA_INPUT_HEIGHT);
         }
 
+        unsigned long inferenceTimer = millis();
         runClassifierAndExtractInfo(decodeBuffer, output);
+
+        output.inferenceLatency = millis() - inferenceTimer;
         output.totalLatency = millis() - currentStartTimer;
         INFERENCE_LOG_FN("Total time taken: %lu", true, output.totalLatency);
+        INFERENCE_LOG_FN("Inference time taken: %lu", true, output.inferenceLatency);
 
         if (outProcessed != nullptr && outSize != nullptr)
         {

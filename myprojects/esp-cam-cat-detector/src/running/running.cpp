@@ -1,4 +1,6 @@
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#define INFERENCE_ENABLE_LOG
+#define ENABLE_LOGGING
 
 #include <Arduino.h>
 #include <esp_wifi.h>
@@ -9,30 +11,39 @@
 #include <general/inference_util.h>
 #include <general/model_util.h>
 #include <general/util.h>
+#include <general/iot_setup.h>
 
 #define AVERAGING_WINDOW 3
 #define INFERENCE_THRESHOLD 0.7f
-#define DETECTION_FOLDER "/detections"
+#define DETECTION_FOLDER "/final-detections"
+#define EMPTY_FOLDER "/final-empty"
 
 volatile bool cameraInit = false;
-volatile bool sdInit = false;
 bool timeInit = false;
 
 unsigned long inferenceTimer = 0;
 unsigned long inferenceDelay = 800;
-volatile bool inferenceOn = false;
+volatile bool inferenceOn = true;
 
 unsigned long luminosityUpdateInterval = 30 * 60 * 1000;
 unsigned long luminosityReadTimer = 0;
 float currentLuminosity = UINT32_MAX;
 
+unsigned long saveEmptyImageInterval = 45 * 60 * 1000;
+unsigned long lastSavedEmptyImage = -saveEmptyImageInterval;
+
 volatile bool doAction = false;
+esp_jpeg_image_scale_t jpegScale = JPEG_IMAGE_SCALE_0;
 
 void updateLuminosity()
 {
     currentLuminosity = readLuminosity();
-    // CamOpt::updateExposure(currentLuminosity);
     luminosityReadTimer = millis();
+}
+
+void delayTaskFn(TickType_t &lastWake, TickType_t interval)
+{
+    vTaskDelayUntil(&lastWake, interval);
 }
 
 void inferenceTask(void *args)
@@ -42,53 +53,47 @@ void inferenceTask(void *args)
 
     while (true)
     {
-        if (cameraInit && inferenceOn)
+        if (!cameraInit || !inferenceOn)
         {
-            camera_fb_t *fb = getFrameWithFlash();
-
-            float average = 0;
-            for (uint8_t i = 0; i < AVERAGING_WINDOW; i++)
-            {
-                InferenceUtil::InferenceOutput result{};
-                InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len);
-
-                float val = InferenceUtil::triggerCertainty(result);
-                MLOGF("Inference ran, current certainty: %f\n", val);
-
-                average += val;
-                delay(10);
-            }
-            average /= AVERAGING_WINDOW;
-
-            if (average >= INFERENCE_THRESHOLD)
-            {
-                doAction = true;
-                MLOGF("Average %f is higher than threshold, triggering.\n", average);
-
-                if (sdInit)
-                {
-                    tm info{};
-                    timeInit = getLocalTime(&info);
-
-                    char nameBuf[128]{};
-                    snprintf(nameBuf,
-                        sizeof(nameBuf),
-                        "%s/%d_%d_%d__%d_%d_%d__%f.jpeg",
-                        DETECTION_FOLDER,
-                        info.tm_year,
-                        info.tm_mon,
-                        info.tm_mday,
-                        info.tm_hour,
-                        info.tm_min,
-                        info.tm_sec,
-                        average);
-
-                    SD_MMC.open(nameBuf, FILE_WRITE);
-                }
-            }
-
-            esp_camera_fb_return(fb);
+            delayTaskFn(lastWake, interval);
+            continue;
         }
+
+        camera_fb_t *fb = getFrameWithFlash();
+        if (!fb)
+        {
+            MLOGN("Could not acquire framebuffer.");
+            delayTaskFn(lastWake, interval);
+            continue;
+        }
+
+        float average = 0;
+        for (uint8_t i = 0; i < AVERAGING_WINDOW; i++)
+        {
+            InferenceUtil::InferenceOutput result{};
+            InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, nullptr, nullptr, jpegScale);
+
+            float val = InferenceUtil::triggerCertainty(result);
+            MLOGF("Inference ran, current certainty: %f\n", val);
+
+            average += val;
+            delay(5);
+        }
+        average /= AVERAGING_WINDOW;
+
+        if (average >= INFERENCE_THRESHOLD)
+        {
+            doAction = true;
+            MLOGF("Average %f is higher than threshold, triggering.\n", average);
+            saveImg(fb, average, DETECTION_FOLDER);
+        }
+        else if (millis() - lastSavedEmptyImage > saveEmptyImageInterval)
+        {
+            saveImg(fb, average, EMPTY_FOLDER);
+            lastSavedEmptyImage = millis();
+        }
+
+        esp_camera_fb_return(fb);
 
         vTaskDelayUntil(&lastWake, interval);
     }
@@ -233,18 +238,28 @@ void setup()
     Serial.begin(115200);
 #endif
 
+    delay(3000);
+
+    MLOGF("PSRAM: %s\n", psramFound() ? "OK" : "FAILED");
+    MLOGF("Free PSRAM: %d bytes\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     setupPins();
 
     WiFi.setSleep(WIFI_PS_NONE);
     esp_log_level_set("*", ESP_LOG_NONE);
 
-    camConfig.frame_size = FRAMESIZE_VGA;
+    camConfig.frame_size = FRAMESIZE_SXGA;
     cameraInit = CamConfig::initCamera();
-    CamConfig::setRes(FRAMESIZE_QVGA);
+    if (cameraInit)
+    {
+        CamConfig::setRes(FRAMESIZE_240X240);
+        jpegScale = JPEG_IMAGE_SCALE_0;
+    }
+
     MLOGF("Free PSRAM after camera init: %lu\n", ESP.getFreePsram());
+    MLOGF("Free DRAM after camera init: %zu\n", ESP.getFreeHeap());
 
-    // CamConfig::initSdCard();
-
+    sdInit = CamConfig::initSdCard();
     updateLuminosity();
 
     int modelInitRes = ModelUtil::loadModel();
@@ -263,7 +278,7 @@ void setup()
     {
         VALIDATE_AUTH();
         camera_fb_t *fb = getFrameWithFlash();
-        server.send_P(200, "image/jpeg", (char*) fb->buf, fb->len);
+        server.send_P(200, "text/plain", (char*) fb->buf, fb->len);
         esp_camera_fb_return(fb);
     });
 
@@ -283,24 +298,33 @@ void setup()
         size_t outImgSize = 0;
 
         InferenceUtil::InferenceOutput result{};
-        InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, &outImg, &outImgSize);
+        InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, &outImg, &outImgSize, jpegScale);
         server.sendHeader("x-trigger-certainty", String(InferenceUtil::triggerCertainty(result)));
 
         server.sendHeader("x-result", InferenceUtil::currentOutput);
         esp_camera_fb_return(fb);
-        InferenceUtil::drawMarkers(result, outImg);
 
-        uint8_t *outJpeg = nullptr;
-        size_t outJpegSize = 0;
-        fmt2jpg(outImg, outImgSize, 96, 96, PIXFORMAT_RGB888, 200, &outJpeg, &outJpegSize);
-        free(outImg);
+        if (outImg != nullptr)
+        {
+            InferenceUtil::drawMarkers(result, outImg);
 
-        server.send_P(200, "image/jpeg", (char*) outJpeg, outJpegSize);
-        free(outJpeg);
+            uint8_t *outJpeg = nullptr;
+            size_t outJpegSize = 0;
+            fmt2jpg(outImg, outImgSize, 96, 96, PIXFORMAT_RGB888, 200, &outJpeg, &outJpegSize);
+            free(outImg);
+
+            server.send_P(200, "image/jpeg", (char*) outJpeg, outJpegSize);
+            free(outJpeg);
+        }
+        else
+        {
+            server.send(500, "text/plain", "error running inference");
+        }
     });
 
     handleServerUpload();
     ConfigPageSetup::setupConfigPage();
+    IotSetup::setup();
 
     MLOGN("Started.");
 
@@ -318,7 +342,7 @@ void setup()
         "actiontask",
         2048,
         nullptr,
-        3,
+        4,
         nullptr,
         1);
 }
@@ -326,6 +350,7 @@ void setup()
 void loop()
 {
     ConfigPageSetup::configPageLoop();
+    IotSetup::loop();
 
     if (WiFi.status() == WL_CONNECTED)
     {

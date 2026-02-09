@@ -30,6 +30,7 @@ namespace ConfigPageSetup
     inline unsigned long lastFrameSent = 0;
     inline WiFiClient currentClient;
     inline bool streamActive = false;
+    inline bool streamInference = false;
 
     inline void mjpegStreamHandle()
     {
@@ -58,6 +59,11 @@ namespace ConfigPageSetup
             if (fps > 0 && fps <= maxFps)
             {
                 frameIntervalMs = 1000 / fps;
+            }
+
+            if (server.arg("inference") == "true")
+            {
+                streamInference = true;
             }
 
             streamActive = true;

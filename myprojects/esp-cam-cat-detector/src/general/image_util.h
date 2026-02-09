@@ -1,20 +1,21 @@
 #pragma once
 
-namespace JPEG_DECODE_UTIL
+namespace IMAGE_UTIL
 {
-    struct DecodeContext
-    {
-        uint8_t* buf = nullptr;
-        size_t bufLen = 0;
-        size_t imageWidth = 0;
-        bool outputBGR = false;
-    };
-
     enum Status
     {
         OK,
+        DECODE_BUF_ALLOCATION_FAILED,
+        OPEN_JPEG_ERROR,
+        DECODE_ERROR,
+        COORDINATES_OUT_OF_BOUND,
         BUFFER_TOO_SMALL,
-        INVALID_BUFFER,
+    };
+
+    struct ImageDimensions
+    {
+        int width = -1;
+        int height = -1;
     };
 
     inline uint8_t rgb_to_gray(uint8_t r, uint8_t g, uint8_t b)
@@ -43,25 +44,6 @@ namespace JPEG_DECODE_UTIL
             p[2] = r;
         }
     }
-}
-
-namespace IMAGE_UTIL
-{
-    enum Status
-    {
-        OK,
-        DECODE_BUF_ALLOCATION_FAILED,
-        OPEN_JPEG_ERROR,
-        DECODE_ERROR,
-        COORDINATES_OUT_OF_BOUND,
-        BUFFER_TOO_SMALL,
-    };
-
-    struct ImageDimensions
-    {
-        int width = -1;
-        int height = -1;
-    };
 
     typedef struct
     {
@@ -270,5 +252,19 @@ namespace IMAGE_UTIL
         }
 
         return false;
+    }
+
+    inline void adjustDimensionsScale(ImageDimensions &dimensions, esp_jpeg_image_scale_t scale)
+    {
+        uint32_t scale_div = 1;
+        switch(scale) {
+            case JPEG_IMAGE_SCALE_1_2: scale_div = 2; break;
+            case JPEG_IMAGE_SCALE_1_4: scale_div = 4; break;
+            case JPEG_IMAGE_SCALE_1_8: scale_div = 8; break;
+            default: scale_div = 1;
+        }
+
+        dimensions.width  = ceil(dimensions.width / scale_div);
+        dimensions.height = ceil(dimensions.height / scale_div);
     }
 }
