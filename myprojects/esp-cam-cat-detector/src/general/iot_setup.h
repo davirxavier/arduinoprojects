@@ -13,12 +13,14 @@
 #include "iot_setup.h"
 
 #define POWER_CH 0
-#define LUM_CH 1
+#define SAVE_CH 1
+#define LUM_CH 2
 
 namespace IotProperties
 {
     inline EmberIot ember(emberDbUrl, emberDeviceId, emberUsername, emberPassword, emberWebApiKey);
     static volatile bool inferenceOn = false;
+    static volatile bool saveOn = true;
     static float currentLuminosity = UINT32_MAX;
 
     inline void setup()
@@ -43,9 +45,20 @@ namespace IotProperties
         ember.channelWrite(POWER_CH, EMBER_BUTTON_OFF);
     }
 
+    inline void toggleSaving()
+    {
+        saveOn = !saveOn;
+        ember.channelWrite(SAVE_CH, saveOn);
+    }
+
     inline bool isInferenceOn()
     {
         return inferenceOn;
+    }
+
+    inline bool isSavingOn()
+    {
+        return saveOn;
     }
 }
 

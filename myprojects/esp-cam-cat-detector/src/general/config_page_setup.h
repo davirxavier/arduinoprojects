@@ -25,6 +25,7 @@ namespace ConfigPageSetup
     inline int maxFps = 20;
     inline framesize_t maxFramesize = FRAMESIZE_VGA;
     inline framesize_t defaultFramesize = camConfig.frame_size;
+    inline framesize_t infFramesize = FRAMESIZE_96X96;
 
     inline int frameIntervalMs = (1000 / 1);
     inline unsigned long lastFrameSent = 0;
@@ -51,7 +52,7 @@ namespace ConfigPageSetup
                 int framesize = server.arg("framesize").toInt();
                 if (framesize >= 0 && framesize <= maxFramesize)
                 {
-                    CamConfig::setRes((framesize_t) framesize);
+                    CamConfig::setRes((framesize_t)framesize);
                 }
             }
 
@@ -64,6 +65,7 @@ namespace ConfigPageSetup
             if (server.arg("inference") == "true")
             {
                 streamInference = true;
+                CamConfig::setRes(infFramesize);
             }
 
             streamActive = true;
@@ -82,13 +84,13 @@ namespace ConfigPageSetup
 
     inline void setupConfigPage()
     {
-        ESP_CONFIG_PAGE::addCustomAction("RESTART", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
+        ESP_CONFIG_PAGE::addCustomAction("RESTART", [](ESP_CONFIG_PAGE::WEBSERVER_T& server)
         {
             server.send(200);
             ESP.restart();
         });
 
-        ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
+        ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T& server)
         {
             server.send(200);
             testRun();
@@ -126,6 +128,7 @@ namespace ConfigPageSetup
         if (!currentClient.connected())
         {
             streamActive = false;
+            streamInference = false;
             currentClient.stop();
             MLOGN("Stream client disconnected");
             CamConfig::setRes(defaultFramesize);
@@ -137,24 +140,69 @@ namespace ConfigPageSetup
             return;
         }
 
-        camera_fb_t *fb = esp_camera_fb_get();
+        camera_fb_t* fb = esp_camera_fb_get();
         if (fb == nullptr)
         {
             return;
         }
 
-        currentClient.printf(
-           "--frame\r\n"
-           "Content-Type: image/jpeg\r\n"
-           "Content-Length: %u\r\n\r\n",
-           fb->len
-         );
+        uint8_t* outImg = fb->buf;
+        size_t outImgSize = fb->len;
 
-        currentClient.write(fb->buf, fb->len);
+        if (streamInference)
+        {
+            InferenceUtil::InferenceOutput output{};
+            InferenceUtil::runInferenceFromImage(output, fb->buf, fb->len, &outImg, &outImgSize);
+
+            if (outImg != nullptr)
+            {
+                InferenceUtil::drawMarkers(output, outImg);
+
+                uint8_t *jpegOut = nullptr;
+                size_t jpegOutSize = 0;
+                bool res = fmt2jpg(outImg, outImgSize, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 90, &jpegOut, &jpegOutSize);
+                free(outImg);
+                outImg = nullptr;
+                if (res)
+                {
+                    outImg = jpegOut;
+                    outImgSize = jpegOutSize;
+                }
+            }
+        }
+
+        if (outImg != nullptr)
+        {
+            currentClient.printf(
+                "--frame\r\n"
+                "Content-Type: image/jpeg\r\n"
+                "Content-Length: %u\r\n\r\n",
+                outImgSize
+            );
+
+            currentClient.write(outImg, outImgSize);
+            currentClient.print("\r\n");
+            currentClient.flush();
+
+            free(outImg);
+        }
+        else
+        {
+            constexpr char message[] = "Error capturing frame or running inference";
+
+            currentClient.printf(
+                "--frame\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: %u\r\n\r\n"
+                "%s\r\n"
+                "--frame\r\n",
+                strlen(message),
+                message
+            );
+            currentClient.stop();
+        }
+
         esp_camera_fb_return(fb);
-        currentClient.print("\r\n");
-        currentClient.flush();
-
         lastFrameSent = millis();
     }
 }

@@ -32,6 +32,8 @@
 #include <esp_camera.h>
 #include <SD_MMC.h>
 
+#include "iot_setup.h"
+
 constexpr uint32_t LUM_FLOOR = 128;
 constexpr uint32_t LUM_CEIL  = 2200;
 inline volatile bool sdInit = false;
@@ -111,6 +113,11 @@ inline void testRun()
 inline void saveImg(camera_fb_t *fb, float average, const char *folder)
 {
     vTaskDelay(1);
+
+    if (!IotProperties::isSavingOn())
+    {
+        return;
+    }
 
     if (sdInit && (SD_MMC.totalBytes() - SD_MMC.usedBytes() + 32) > fb->len)
     {

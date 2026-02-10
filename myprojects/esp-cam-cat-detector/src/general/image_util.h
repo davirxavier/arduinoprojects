@@ -18,12 +18,12 @@ namespace IMAGE_UTIL
         int height = -1;
     };
 
-    inline uint8_t rgb_to_gray(uint8_t r, uint8_t g, uint8_t b)
+    inline uint8_t rgbToGrayscale(uint8_t r, uint8_t g, uint8_t b)
     {
         return (uint8_t)(0.299f * r + 0.587f * g + 0.114f * b);
     }
 
-    inline void rgb_bgr_swap(uint8_t* buffer, size_t length)
+    inline void rgbBgrSwap(uint8_t* buffer, size_t length)
     {
         if (!buffer || length < 3) return;
 
@@ -52,7 +52,7 @@ namespace IMAGE_UTIL
         uint8_t r;
     } BGR;
 
-    static inline void set_pixel(
+    static inline void setPixel(
         uint8_t* img,
         int x,
         int y,
@@ -65,7 +65,7 @@ namespace IMAGE_UTIL
         img[idx + 2] = c.r;
     }
 
-    inline void draw_cross(
+    inline void drawCross(
         uint8_t* img,
         int imgWidth,
         int imgHeight,
@@ -90,7 +90,7 @@ namespace IMAGE_UTIL
                 int y = cy + t;
 
                 if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
-                    set_pixel(img, x, y, c);
+                    setPixel(img, x, y, c);
             }
 
             // vertical arm
@@ -100,12 +100,12 @@ namespace IMAGE_UTIL
                 int y = cy + i;
 
                 if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
-                    set_pixel(img, x, y, c);
+                    setPixel(img, x, y, c);
             }
         }
     }
 
-    inline void draw_circle(
+    inline void drawCircle(
         uint8_t* img,
         int imgWidth,
         int imgHeight,
@@ -140,12 +140,12 @@ namespace IMAGE_UTIL
                 int y = cy + dy;
 
                 if (x >= 0 && x < imgWidth && y >= 0 && y < imgHeight)
-                    set_pixel(img, x, y, c);
+                    setPixel(img, x, y, c);
             }
         }
     }
 
-    inline void crop_resize_square_bgr_inplace(uint8_t* src, int src_w, int src_h, int dst_w, int dst_h)
+    inline void cropResizeInPlace(uint8_t* src, int src_w, int src_h, int dst_w, int dst_h)
     {
         // Determine square crop (fit shortest axis)
         int crop_size = src_w < src_h ? src_w : src_h;

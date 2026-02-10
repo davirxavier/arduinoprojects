@@ -8,6 +8,7 @@
 #include <general/util.h>
 #include <esp_camera.h>
 #include "FS.h"
+#include "image_util.h"
 #include "SD_MMC.h"
 #include "driver/rtc_io.h"
 
@@ -60,6 +61,36 @@ inline camera_config_t camConfig = {
 
 namespace CamConfig
 {
+    static constexpr IMAGE_UTIL::ImageDimensions dimensionsByFramesize[] = {
+        {96, 96},        // FRAMESIZE_96X96
+        {160, 120},      // FRAMESIZE_QQVGA
+        {128, 128},      // FRAMESIZE_128X128
+        {176, 144},      // FRAMESIZE_QCIF
+        {240, 176},      // FRAMESIZE_HQVGA
+        {240, 240},      // FRAMESIZE_240X240
+        {320, 240},      // FRAMESIZE_QVGA
+        {320, 320},      // FRAMESIZE_320X320
+        {400, 296},      // FRAMESIZE_CIF
+        {480, 320},      // FRAMESIZE_HVGA
+        {640, 480},      // FRAMESIZE_VGA
+        {800, 600},      // FRAMESIZE_SVGA
+        {1024, 768},     // FRAMESIZE_XGA
+        {1280, 720},     // FRAMESIZE_HD
+        {1280, 1024},    // FRAMESIZE_SXGA
+        {1600, 1200},    // FRAMESIZE_UXGA
+        {1920, 1080},    // FRAMESIZE_FHD
+        {720, 1280},     // FRAMESIZE_P_HD
+        {864, 1536},     // FRAMESIZE_P_3MP
+        {2048, 1536},    // FRAMESIZE_QXGA
+        {2560, 1440},    // FRAMESIZE_QHD
+        {2560, 1600},    // FRAMESIZE_WQXGA
+        {1080, 1920},    // FRAMESIZE_P_FHD
+        {2560, 1920},    // FRAMESIZE_QSXGA
+        {2592, 1944},    // FRAMESIZE_5MP
+        {0, 0}           // FRAMESIZE_INVALID
+    };
+    static constexpr int dimensionsByFramesizeLength = sizeof(dimensionsByFramesize) / sizeof(dimensionsByFramesize[0]);
+
     enum CamFlashMode
     {
         OFF,
@@ -110,11 +141,61 @@ namespace CamConfig
         return true;
     }
 
-    inline void setRes(framesize_t framesize)
+    static bool consumeFramesUntilSize(int width, int height)
+    {
+        MLOGF("Consuming camera frames until resolution changed to (w/h): %d / %d\n", width, height);
+        int tries = 0;
+        int maxTries = 10;
+
+        bool incorrectFrameSize = true;
+        while (incorrectFrameSize)
+        {
+            if (tries >= maxTries)
+            {
+                MLOGN("Couldn't acquire correct resolution frame.");
+                return false;
+            }
+
+            camera_fb_t *fb = esp_camera_fb_get();
+            if (fb != nullptr)
+            {
+                IMAGE_UTIL::ImageDimensions dims{};
+                IMAGE_UTIL::jpegGetSize(fb->buf, fb->len, dims);
+                esp_camera_fb_return(fb);
+
+                incorrectFrameSize = dims.width != width || dims.height != height;
+                tries++;
+            }
+
+            delay(100);
+        }
+
+        MLOGN("Acquired correct resolution frame.");
+        return true;
+    }
+
+    inline bool getDimsByFrameSize(framesize_t framesize, IMAGE_UTIL::ImageDimensions &dims)
+    {
+        if (framesize < dimensionsByFramesizeLength && framesize >= 0)
+        {
+            dims = dimensionsByFramesize[framesize];
+            return true;
+        }
+
+        return false;
+    }
+
+    inline void setRes(const framesize_t framesize)
     {
         sensor_t *s = esp_camera_sensor_get();
         s->set_framesize(s, framesize);
         camConfig.frame_size = framesize;
+
+        IMAGE_UTIL::ImageDimensions dims{};
+        if (getDimsByFrameSize(framesize, dims))
+        {
+            consumeFramesUntilSize(dims.width, dims.height);
+        }
     }
 }
 

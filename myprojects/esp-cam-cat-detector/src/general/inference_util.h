@@ -334,7 +334,7 @@ namespace InferenceUtil
 
         if (dimensions.width > MODEL_DATA_INPUT_WIDTH || dimensions.height > MODEL_DATA_INPUT_HEIGHT)
         {
-            IMAGE_UTIL::crop_resize_square_bgr_inplace(
+            IMAGE_UTIL::cropResizeInPlace(
                 decodeBuffer,
                 dimensions.width,
                 dimensions.height,
@@ -401,8 +401,8 @@ namespace InferenceUtil
             if (values.classId > 0 && values.value >= thresholds[values.classId])
             {
                 IMAGE_UTIL::BGR c = classColors[values.classId];
-                IMAGE_UTIL::draw_cross(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 8);
-                IMAGE_UTIL::draw_circle(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 3);
+                IMAGE_UTIL::drawCross(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 6);
+                IMAGE_UTIL::drawCircle(img, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, values.x, values.y, c, 3);
             }
         }
     }
