@@ -72,9 +72,36 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 
 #
-# PSRAM (required for camera)
+# SPI RAM config
 #
-CONFIG_ESP32_SPIRAM_SUPPORT=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+# CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+# CONFIG_SPIRAM_TYPE_ESPPSRAM64 is not set
+CONFIG_SPIRAM_CLK_IO=30
+CONFIG_SPIRAM_CS_IO=26
+# CONFIG_SPIRAM_XIP_FROM_PSRAM is not set
+# CONFIG_SPIRAM_FETCH_INSTRUCTIONS is not set
+# CONFIG_SPIRAM_RODATA is not set
+# CONFIG_SPIRAM_SPEED_80M is not set
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_SPEED=40
+# CONFIG_SPIRAM_ECC_ENABLE is not set
+CONFIG_SPIRAM_BOOT_HW_INIT=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_PRE_CONFIGURE_MEMORY_PROTECTION=y
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
+# CONFIG_SPIRAM_USE_MEMMAP is not set
+# CONFIG_SPIRAM_USE_CAPS_ALLOC is not set
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+# CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY is not set
+# CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY is not set
+# end of SPI RAM config
 ```
 
 - idf_component.yml
@@ -84,7 +111,8 @@ dependencies:
   idf:
     version: '>=5.4.0'
   espressif/esp-tflite-micro: ^1.3.5 # If model running is needed
-  espressif/esp32-camera: =2.0.15
+  espressif/esp32-camera: =2.1.4 # !!! in this version fmt2rgb888 produces rgb byte order, not bgr anymore
+                                 # other functions like fmt2jpg still expect bgr order with rgb888, however
 
 # Use 2.0.15 if jpeg -> bgr888 decoding is needed or later releases if jpeg -> rgb888 is needed.
 # Default byte order changed here: https://github.com/espressif/esp32-camera/pull/740/commits/6b684158003d9a6f771d6b3a82f570b1dee11694
@@ -122,33 +150,15 @@ List of usable pins while using all onboard features (cam, psram and sdcard).
 - platformio.ini
 
 ```ini
-[env:esp32cam]
-platform = https://github.com/pioarduino/platform-espressif32/releases/download/54.03.21/platform-espressif32.zip
-board = esp32cam
-framework = arduino, espidf
+[env:esp32s3cam]
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
+board = esp32-s3-devkitc1-n16r8
+framework = arduino
 board_build.filesystem = littlefs
-board_build.partitions = min_spiffs.csv
 board_upload.flash_size = 16MB
 monitor_speed = 115200
 upload_speed = 921600
-lib_deps =
-    esp-config-page=symlink://../../../esp-config-page
-build_unflags =
-    -Werror=all
-custom_component_remove =
-    espressif/esp_hosted
-    espressif/esp_wifi_remote
-    espressif/esp-dsp
-    espressif/esp32-camera
-    espressif/libsodium
-    espressif/esp-modbus
-    espressif/qrcode
-    espressif/esp_insights
-    espressif/esp_diag_data_store
-    espressif/esp_diagnostics
-    espressif/esp_rainmaker
-    espressif/rmaker_common
 ```
 
-- sdkconfig.defaults: Same as ESP32-CAM.
+- sdkconfig.defaults: Same as ESP32-CAM but with ```CONFIG_SPIRAM_MODE_OCT=y```.
 - idf_component.yml: Same as ESP32-CAM.

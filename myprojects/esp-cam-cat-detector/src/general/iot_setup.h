@@ -19,12 +19,67 @@
 namespace IotProperties
 {
     inline EmberIot ember(emberDbUrl, emberDeviceId, emberUsername, emberPassword, emberWebApiKey);
-    static volatile bool inferenceOn = false;
-    static volatile bool saveOn = true;
+
     static float currentLuminosity = UINT32_MAX;
+    const char saveFile[] = "/prop_store";
+
+    struct Props
+    {
+        uint8_t inferenceOn = 0;
+        uint8_t saveOn = 0;
+    };
+
+    struct PropsFile
+    {
+        uint32_t magic;
+        Props props;
+    };
+
+    inline Props props{};
+    constexpr uint32_t PROPS_MAGIC = 0xDEADBEEF;
+
+    inline void save()
+    {
+        File file = LittleFS.open(saveFile, "w");
+        if (!file) return;
+
+        PropsFile pf;
+        pf.magic = PROPS_MAGIC;
+        pf.props = props;
+
+        file.write(reinterpret_cast<const uint8_t*>(&pf), sizeof(pf));
+        file.close();
+    }
+
+    inline void recover()
+    {
+        if (!LittleFS.exists(saveFile)) return;
+
+        File file = LittleFS.open(saveFile, "r");
+        if (!file) return;
+
+        if (file.size() != sizeof(PropsFile))
+        {
+            file.close();
+            return;
+        }
+
+        PropsFile pf;
+        file.read(reinterpret_cast<uint8_t*>(&pf), sizeof(pf));
+        file.close();
+
+        if (pf.magic != PROPS_MAGIC)
+        {
+            props = {};
+            return;
+        }
+
+        props = pf.props;
+    }
 
     inline void setup()
     {
+        recover();
         // ember.init();
     }
 
@@ -41,30 +96,32 @@ namespace IotProperties
 
     inline void toggleInference()
     {
-        inferenceOn = !inferenceOn;
-        ember.channelWrite(POWER_CH, EMBER_BUTTON_OFF);
+        props.inferenceOn = !props.inferenceOn;
+        ember.channelWrite(POWER_CH, props.inferenceOn ? EMBER_BUTTON_ON : EMBER_BUTTON_OFF);
+        save();
     }
 
     inline void toggleSaving()
     {
-        saveOn = !saveOn;
-        ember.channelWrite(SAVE_CH, saveOn);
+        props.saveOn = !props.saveOn;
+        ember.channelWrite(SAVE_CH, props.saveOn);
+        save();
     }
 
     inline bool isInferenceOn()
     {
-        return inferenceOn;
+        return props.inferenceOn;
     }
 
     inline bool isSavingOn()
     {
-        return saveOn;
+        return props.saveOn;
     }
 }
 
 EMBER_CHANNEL_CB(POWER_CH)
 {
-    IotProperties::inferenceOn = prop.toButtonIsOn();
+    IotProperties::props.inferenceOn = prop.toButtonIsOn();
 }
 
 #endif //IOT_SETUP_H

@@ -25,17 +25,26 @@ unsigned long inferenceTimer = 0;
 unsigned long inferenceDelay = 800;
 
 unsigned long luminosityUpdateInterval = 30 * 60 * 1000;
-unsigned long luminosityReadTimer = 0;
+unsigned long luminosityReadTimer = -luminosityUpdateInterval;
 
 unsigned long saveEmptyImageInterval = 45 * 60 * 1000;
 unsigned long lastSavedEmptyImage = -saveEmptyImageInterval;
 
-volatile bool doAction = false;
 esp_jpeg_image_scale_t jpegScale = JPEG_IMAGE_SCALE_0;
 
 void updateLuminosity()
 {
     IotProperties::setLuminosity(readLuminosity());
+
+    if (IotProperties::currentLuminosity < 0.08)
+    {
+        toggleFlash(true);
+    }
+    else if (IotProperties::currentLuminosity > 0.15)
+    {
+        toggleFlash(false);
+    }
+
     luminosityReadTimer = millis();
 }
 
@@ -49,6 +58,9 @@ void inferenceTask(void *args)
     TickType_t interval = pdMS_TO_TICKS(inferenceDelay);
     TickType_t lastWake = xTaskGetTickCount();
 
+    ActionController action;
+    action.setup();
+
     while (true)
     {
         if (!cameraInit || !IotProperties::isInferenceOn())
@@ -57,7 +69,7 @@ void inferenceTask(void *args)
             continue;
         }
 
-        camera_fb_t *fb = getFrameWithFlash();
+        camera_fb_t *fb = esp_camera_fb_get();
         if (!fb)
         {
             MLOGN("Could not acquire framebuffer.");
@@ -81,7 +93,7 @@ void inferenceTask(void *args)
 
         if (average >= INFERENCE_THRESHOLD)
         {
-            doAction = true;
+            action.doAction();
             MLOGF("Average %f is higher than threshold, triggering.\n", average);
             saveImg(fb, average, DETECTION_FOLDER);
         }
@@ -92,27 +104,6 @@ void inferenceTask(void *args)
         }
 
         esp_camera_fb_return(fb);
-
-        vTaskDelayUntil(&lastWake, interval);
-    }
-}
-
-void actionTask(void *args)
-{
-    TickType_t interval = pdMS_TO_TICKS(100);
-    TickType_t lastWake = xTaskGetTickCount();
-
-    ActionController action;
-    action.setup();
-
-    while (true)
-    {
-        if (doAction)
-        {
-            action.doAction();
-            doAction = false;
-        }
-
         action.loop();
         vTaskDelayUntil(&lastWake, interval);
     }
@@ -120,114 +111,114 @@ void actionTask(void *args)
 
 void handleServerUpload()
 {
-    constexpr size_t maxUploadSize = 8192;
-    static uint8_t buffer[maxUploadSize];
-    static size_t uploadOffset = 0;
-    static String error = "";
-
-    server.on("/inf-upload", HTTP_POST, []()
-    {
-        VALIDATE_AUTH();
-
-        if (!error.isEmpty())
-        {
-            server.send(500, "text/plain", error);
-            return;
-        }
-
-        if (uploadOffset == 0)
-        {
-            server.send(400, "text/plain", "no data sent");
-            return;
-        }
-
-        size_t srcSize = MODEL_DATA_INPUT_WIDTH * MODEL_DATA_INPUT_HEIGHT * MODEL_DATA_INPUT_CHANNELS;
-        auto src = (uint8_t*) ps_malloc(srcSize);
-        fmt2rgb888(buffer, uploadOffset, PIXFORMAT_JPEG, src);
-
-        uint8_t *outImg = nullptr;
-        size_t outImgSize = 0;
-
-        InferenceUtil::InferenceOutput result{};
-        InferenceUtil::runInferenceFromImage(result, buffer, uploadOffset, &outImg, &outImgSize);
-        if (result.status == 0)
-        {
-            char buf[256]{};
-            char numBuf[16]{};
-
-            for (size_t i = 0; i < result.count; i++)
-            {
-                InferenceUtil::InferenceValues &vals = result.foundValues[i];
-                strcat(buf, vals.label);
-                strcat(buf, " - prob=");
-
-                snprintf(numBuf, sizeof(numBuf), "%f", vals.value);
-                strcat(buf, numBuf);
-
-                snprintf(numBuf, sizeof(numBuf), "%f", vals.x);
-                strcat(buf, ", x=");
-                strcat(buf, numBuf);
-
-                strcat(buf, ", y=");
-                strcat(buf, numBuf);
-
-                strcat(buf, "; ");
-            }
-
-            snprintf(numBuf, sizeof(numBuf), "%f", InferenceUtil::triggerCertainty(result));
-            strcat(buf, "Should trigger certainty: ");
-            strcat(buf, numBuf);
-
-            snprintf(numBuf, sizeof(numBuf), "%lu", result.totalLatency);
-            strcat(buf, "; latency=");
-            strcat(buf, numBuf);
-            strcat(buf, "ms");
-
-            server.sendHeader("x-result", buf);
-            InferenceUtil::drawMarkers(result, outImg);
-
-            uint8_t *jpegOut = nullptr;
-            size_t jpegOutSize = 0;
-            fmt2jpg(outImg, outImgSize, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 200, &jpegOut, &jpegOutSize);
-            free(outImg);
-
-            server.send_P(200, "image/jpeg", (char*) jpegOut, jpegOutSize);
-            free(jpegOut);
-        }
-        else
-        {
-            server.send(500, "text/plain", InferenceUtil::currentOutput);
-        }
-    }, []()
-    {
-        VALIDATE_AUTH();
-
-        HTTPUpload &upload = server.upload();
-        MLOGF("Received upload event %d with name %s and size %zu\n", upload.status, upload.filename.c_str(), upload.totalSize);
-
-        if (upload.status == UPLOAD_FILE_START)
-        {
-            memset(buffer, 0, maxUploadSize);
-            uploadOffset = 0;
-            error = "";
-        }
-        else if (upload.status == UPLOAD_FILE_WRITE)
-        {
-            if (!error.isEmpty())
-            {
-                return;
-            }
-
-            if (uploadOffset + upload.currentSize >= maxUploadSize)
-            {
-                error = "upload overflow, limit is 4kb";
-                return;
-            }
-
-            memcpy(buffer + uploadOffset, upload.buf, upload.currentSize);
-            uploadOffset += upload.currentSize;
-        }
-    });
+    // constexpr size_t maxUploadSize = 8192;
+    // static uint8_t buffer[maxUploadSize];
+    // static size_t uploadOffset = 0;
+    // static String error = "";
+    //
+    // server.on("/inf-upload", HTTP_POST, []()
+    // {
+    //     VALIDATE_AUTH();
+    //
+    //     if (!error.isEmpty())
+    //     {
+    //         server.send(500, "text/plain", error);
+    //         return;
+    //     }
+    //
+    //     if (uploadOffset == 0)
+    //     {
+    //         server.send(400, "text/plain", "no data sent");
+    //         return;
+    //     }
+    //
+    //     size_t srcSize = MODEL_DATA_INPUT_WIDTH * MODEL_DATA_INPUT_HEIGHT * MODEL_DATA_INPUT_CHANNELS;
+    //     auto src = (uint8_t*) ps_malloc(srcSize);
+    //     fmt2rgb888(buffer, uploadOffset, PIXFORMAT_JPEG, src);
+    //
+    //     uint8_t *outImg = nullptr;
+    //     size_t outImgSize = 0;
+    //
+    //     InferenceUtil::InferenceOutput result{};
+    //     InferenceUtil::runInferenceFromImage(result, buffer, uploadOffset, &outImg, &outImgSize);
+    //     if (result.status == 0)
+    //     {
+    //         char buf[256]{};
+    //         char numBuf[16]{};
+    //
+    //         for (size_t i = 0; i < result.count; i++)
+    //         {
+    //             InferenceUtil::InferenceValues &vals = result.foundValues[i];
+    //             strcat(buf, vals.label);
+    //             strcat(buf, " - prob=");
+    //
+    //             snprintf(numBuf, sizeof(numBuf), "%f", vals.value);
+    //             strcat(buf, numBuf);
+    //
+    //             snprintf(numBuf, sizeof(numBuf), "%f", vals.x);
+    //             strcat(buf, ", x=");
+    //             strcat(buf, numBuf);
+    //
+    //             strcat(buf, ", y=");
+    //             strcat(buf, numBuf);
+    //
+    //             strcat(buf, "; ");
+    //         }
+    //
+    //         snprintf(numBuf, sizeof(numBuf), "%f", InferenceUtil::triggerCertainty(result));
+    //         strcat(buf, "Should trigger certainty: ");
+    //         strcat(buf, numBuf);
+    //
+    //         snprintf(numBuf, sizeof(numBuf), "%lu", result.totalLatency);
+    //         strcat(buf, "; latency=");
+    //         strcat(buf, numBuf);
+    //         strcat(buf, "ms");
+    //
+    //         server.sendHeader("x-result", buf);
+    //         InferenceUtil::drawMarkers(result, outImg);
+    //
+    //         uint8_t *jpegOut = nullptr;
+    //         size_t jpegOutSize = 0;
+    //         fmt2jpg(outImg, outImgSize, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 200, &jpegOut, &jpegOutSize);
+    //         free(outImg);
+    //
+    //         server.send_P(200, "image/jpeg", (char*) jpegOut, jpegOutSize);
+    //         free(jpegOut);
+    //     }
+    //     else
+    //     {
+    //         server.send(500, "text/plain", InferenceUtil::currentOutput);
+    //     }
+    // }, []()
+    // {
+    //     VALIDATE_AUTH();
+    //
+    //     HTTPUpload &upload = server.upload();
+    //     MLOGF("Received upload event %d with name %s and size %zu\n", upload.status, upload.filename.c_str(), upload.totalSize);
+    //
+    //     if (upload.status == UPLOAD_FILE_START)
+    //     {
+    //         memset(buffer, 0, maxUploadSize);
+    //         uploadOffset = 0;
+    //         error = "";
+    //     }
+    //     else if (upload.status == UPLOAD_FILE_WRITE)
+    //     {
+    //         if (!error.isEmpty())
+    //         {
+    //             return;
+    //         }
+    //
+    //         if (uploadOffset + upload.currentSize >= maxUploadSize)
+    //         {
+    //             error = "upload overflow, limit is 4kb";
+    //             return;
+    //         }
+    //
+    //         memcpy(buffer + uploadOffset, upload.buf, upload.currentSize);
+    //         uploadOffset += upload.currentSize;
+    //     }
+    // });
 }
 
 void setup()
@@ -244,7 +235,7 @@ void setup()
     setupPins();
 
     WiFi.setSleep(WIFI_PS_NONE);
-    esp_log_level_set("*", ESP_LOG_NONE);
+    esp_log_level_set("*", ESP_LOG_VERBOSE);
 
     camConfig.frame_size = FRAMESIZE_SXGA;
     cameraInit = CamConfig::initCamera();
@@ -266,44 +257,57 @@ void setup()
         MLOGF("Error initializing model: %d\n", modelInitRes);
     }
 
-    server.on("/test-run", HTTP_POST, []()
+    ConfigPageSetup::setupConfigPage();
+
+    ESP_CONFIG_PAGE::addServerHandler("/test-run", HTTP_POST, [](ESP_CONFIG_PAGE::REQUEST_T req)
     {
-        VALIDATE_AUTH();
         testRun();
+        ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "ok", req);
     });
 
-    server.on("/snap", HTTP_GET, []()
+    ESP_CONFIG_PAGE::addServerHandler("/snap", HTTP_GET, [](ESP_CONFIG_PAGE::REQUEST_T req)
     {
-        VALIDATE_AUTH();
-        camera_fb_t *fb = getFrameWithFlash();
-        server.send_P(200, "text/plain", (char*) fb->buf, fb->len);
+        camera_fb_t *fb = esp_camera_fb_get();
+
+        ESP_CONFIG_PAGE::ResponseContext c{};
+        ESP_CONFIG_PAGE::initResponseContext(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "image/jpeg", fb->len, c);
+        ESP_CONFIG_PAGE::startResponse(req, c);
+        ESP_CONFIG_PAGE::writeResponse(fb->buf, fb->len, c);
+        ESP_CONFIG_PAGE::endResponse(req, c);
+
         esp_camera_fb_return(fb);
     });
 
-    server.on("/inf-toggle", HTTP_POST, []()
+    ESP_CONFIG_PAGE::addServerHandler("/inf-toggle", HTTP_POST, [](ESP_CONFIG_PAGE::REQUEST_T req)
     {
-        VALIDATE_AUTH();
         IotProperties::toggleInference();
-        server.send(200, "text/plain", "ok");
+        ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, IotProperties::isInferenceOn() ? "enabled" : "disabled", req);
     });
 
-    server.on("/inf", HTTP_GET, []()
+    ESP_CONFIG_PAGE::addServerHandler("/inf-status", HTTP_GET, [](ESP_CONFIG_PAGE::REQUEST_T req)
     {
-        VALIDATE_AUTH();
+        ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, IotProperties::isInferenceOn() ? "enabled" : "disabled", req);
+    });
 
-        camera_fb_t *fb = getFrameWithFlash();
+    ESP_CONFIG_PAGE::addServerHandler("/inf", HTTP_GET, [](ESP_CONFIG_PAGE::REQUEST_T req)
+    {
+        camera_fb_t *fb = esp_camera_fb_get();
         uint8_t *outImg = nullptr;
         size_t outImgSize = 0;
 
         InferenceUtil::InferenceOutput result{};
         InferenceUtil::runInferenceFromImage(result, fb->buf, fb->len, &outImg, &outImgSize, jpegScale);
-        server.sendHeader("x-trigger-certainty", String(InferenceUtil::triggerCertainty(result)));
-
-        server.sendHeader("x-result", InferenceUtil::currentOutput);
         esp_camera_fb_return(fb);
 
         if (outImg != nullptr)
         {
+            ESP_CONFIG_PAGE::ResponseContext c{};
+            ESP_CONFIG_PAGE::initResponseContext(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "image/jpeg", 0, c);
+            ESP_CONFIG_PAGE::startResponse(req, c);
+
+            ESP_CONFIG_PAGE::sendHeader("x-trigger-certainty", String(InferenceUtil::triggerCertainty(result)).c_str(), c);
+            ESP_CONFIG_PAGE::sendHeader("x-result", InferenceUtil::currentOutput, c);
+
             InferenceUtil::drawMarkers(result, outImg);
 
             uint8_t *outJpeg = nullptr;
@@ -311,17 +315,17 @@ void setup()
             fmt2jpg(outImg, outImgSize, 96, 96, PIXFORMAT_RGB888, 200, &outJpeg, &outJpegSize);
             free(outImg);
 
-            server.send_P(200, "image/jpeg", (char*) outJpeg, outJpegSize);
+            ESP_CONFIG_PAGE::writeResponse(outJpeg, outJpegSize, c);
+            ESP_CONFIG_PAGE::endResponse(req, c);
             free(outJpeg);
         }
         else
         {
-            server.send(500, "text/plain", "error running inference");
+            ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::INTERNAL_SERVER_ERROR, "error running inference", req);
         }
     });
 
     handleServerUpload();
-    ConfigPageSetup::setupConfigPage();
     IotProperties::setup();
 
     MLOGN("Started.");
@@ -334,21 +338,17 @@ void setup()
         3,
         nullptr,
         1);
-
-    xTaskCreatePinnedToCore(
-        actionTask,
-        "actiontask",
-        2048,
-        nullptr,
-        4,
-        nullptr,
-        1);
 }
 
 void loop()
 {
     ConfigPageSetup::configPageLoop();
     IotProperties::loop();
+
+    if (ConfigPageSetup::streamActive)
+    {
+        return;
+    }
 
     if (WiFi.status() == WL_CONNECTED)
     {

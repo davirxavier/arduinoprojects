@@ -5,6 +5,9 @@
 #define ESP32_CONP_OTA_USE_WEBSOCKETS
 // #define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+// #define ESP_CONP_ASYNC_WEBSERVER
+#define ESP_CONP_HTTPS_SERVER
+#define ESP32_CONP_OTA_WS_PORT 443
 #include "inference_util.h"
 
 #ifndef CONFIG_PAGE_SETUP_H
@@ -18,7 +21,6 @@
 #include <general/cam_config.h>
 
 FTPServer ftp;
-WebServer server(8080);
 
 namespace ConfigPageSetup
 {
@@ -31,70 +33,149 @@ namespace ConfigPageSetup
     inline unsigned long lastFrameSent = 0;
     inline WiFiClient currentClient;
     inline bool streamActive = false;
-    inline bool streamInference = false;
 
     inline void mjpegStreamHandle()
     {
-        server.on("/stream", HTTP_GET, []()
+        ESP_CONFIG_PAGE::addServerHandler("/stream", HTTP_GET, [](ESP_CONFIG_PAGE::REQUEST_T req)
         {
-            VALIDATE_AUTH();
-
             MLOGN("Stream connection received");
+            LOGF("%s", esp_camera_available_frames() ? "has frame" : "no frame");
             if (streamActive)
             {
                 MLOGN("Stream already in use");
-                server.send(503, "text/plain", "stream already in use.");
+                ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::BAD_REQUEST, "stream already in use.", req);
                 return;
             }
 
-            if (server.hasArg("framesize"))
+            char paramBuf[128]{};
+            if (ESP_CONFIG_PAGE::getParam(req, "framesize", paramBuf, sizeof(paramBuf)))
             {
-                int framesize = server.arg("framesize").toInt();
+                int framesize = String(paramBuf).toInt();
                 if (framesize >= 0 && framesize <= maxFramesize)
                 {
                     CamConfig::setRes((framesize_t)framesize);
                 }
             }
 
-            int fps = server.arg("fps").toInt();
-            if (fps > 0 && fps <= maxFps)
+            if (ESP_CONFIG_PAGE::getParam(req, "fps", paramBuf, sizeof(paramBuf)))
             {
-                frameIntervalMs = 1000 / fps;
+                int fps = String(paramBuf).toInt();
+                if (fps > 0 && fps <= maxFps)
+                {
+                    frameIntervalMs = 1000 / fps;
+                }
             }
 
-            if (server.arg("inference") == "true")
+            bool inferenceActive = false;
+            if (ESP_CONFIG_PAGE::getParam(req, "inf", paramBuf, sizeof(paramBuf)))
             {
-                streamInference = true;
+                inferenceActive = true;
                 CamConfig::setRes(infFramesize);
             }
 
             streamActive = true;
-            currentClient = server.client();
-            currentClient.setNoDelay(true);
 
-            currentClient.print(
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
-                "Cache-Control: no-cache\r\n"
-                "Connection: keep-alive\r\n\r\n"
-            );
-            MLOGN("Stream started");
+            ESP_CONFIG_PAGE::ResponseContext c{};
+            ESP_CONFIG_PAGE::initResponseContext(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "multipart/x-mixed-replace; boundary=frame", 0, c);
+            ESP_CONFIG_PAGE::startResponse(req, c);
+            ESP_CONFIG_PAGE::sendHeader("cache-control", "no-cache", c);
+
+            bool first = true;
+            char headerBuf[128]{};
+            while (true)
+            {
+                camera_fb_t* fb = esp_camera_fb_get();
+                if (fb == nullptr)
+                {
+                    break;
+                }
+
+                uint8_t *outImg = nullptr;
+                size_t outImgLen = 0;
+                if (inferenceActive)
+                {
+                    InferenceUtil::InferenceOutput output{};
+                    InferenceUtil::runInferenceFromImage(output, fb->buf, fb->len, &outImg, &outImgLen);
+                    if (outImg != nullptr)
+                    {
+                        InferenceUtil::drawMarkers(output, outImg);
+                        uint8_t *outJpeg = nullptr;
+                        size_t outJpegLen = 0;
+                        fmt2jpg(outImg, outImgLen, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 90, &outJpeg, &outJpegLen);
+                        free(outImg);
+
+                        outImg = outJpeg;
+                        outImgLen = outJpegLen;
+                    }
+                }
+                else
+                {
+                    outImg = fb->buf;
+                    outImgLen = fb->len;
+                }
+
+                snprintf(headerBuf,
+                         sizeof(headerBuf),
+                         "%s--frame\r\n"
+                         "Content-Type: image/jpeg\r\n"
+                         "Content-Length: %u\r\n\r\n",
+                         first ? "" : "\r\n",
+                         outImgLen);
+
+                ESP_CONFIG_PAGE::writeResponse(headerBuf, c);
+                int written = ESP_CONFIG_PAGE::writeResponse(outImg, outImgLen, c);
+                if (written < 0)
+                {
+                    esp_camera_fb_return(fb);
+                    if (inferenceActive)
+                    {
+                        free(outImg);
+                    }
+                    break;
+                }
+
+                first = false;
+                esp_camera_fb_return(fb);
+                if (inferenceActive)
+                {
+                    free(outImg);
+                }
+                vTaskDelay(pdMS_TO_TICKS(frameIntervalMs));
+            }
+
+            streamActive = false;
+            CamConfig::setRes(defaultFramesize);
+            ESP_CONFIG_PAGE::endResponse(req, c);
+            MLOGN("Stream ended");
         });
     }
 
     inline void setupConfigPage()
     {
-        ESP_CONFIG_PAGE::addCustomAction("RESTART", [](ESP_CONFIG_PAGE::WEBSERVER_T& server)
+        WiFi.begin();
+
+        ESP_CONFIG_PAGE::addCustomAction("RESTART", [](ESP_CONFIG_PAGE::REQUEST_T req)
         {
-            server.send(200);
+            ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "ok", req);
             ESP.restart();
         });
 
-        ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T& server)
+        ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::REQUEST_T req)
         {
-            server.send(200);
+            ESP_CONFIG_PAGE::sendInstantResponse(ESP_CONFIG_PAGE::CONP_STATUS_CODE::OK, "ok", req);
             testRun();
         });
+
+        httpd_ssl_config sslConfig = HTTPD_SSL_CONFIG_DEFAULT();
+        ESP_CONFIG_PAGE::setupServerConfig(&sslConfig);
+
+        static httpd_handle_t server = nullptr;
+        int res = httpd_ssl_start(&server, &sslConfig);
+        if (res != ESP_OK)
+        {
+            LOGF("Error initializing server: 0x%x\n", res);
+            return;
+        }
 
         ESP_CONFIG_PAGE::setAPConfig(nodeName, password);
         ESP_CONFIG_PAGE::initModules(&server, username, password, nodeName);
@@ -107,8 +188,6 @@ namespace ConfigPageSetup
             esp_camera_deinit();
         };
 
-        server.begin();
-
         ftp.addUser(username, password);
         ftp.addFilesystem("SD", &SD_MMC);
         ftp.begin();
@@ -117,93 +196,7 @@ namespace ConfigPageSetup
     inline void configPageLoop()
     {
         ESP_CONFIG_PAGE::loop();
-        server.handleClient();
         ftp.handle();
-
-        if (!streamActive)
-        {
-            return;
-        }
-
-        if (!currentClient.connected())
-        {
-            streamActive = false;
-            streamInference = false;
-            currentClient.stop();
-            MLOGN("Stream client disconnected");
-            CamConfig::setRes(defaultFramesize);
-            return;
-        }
-
-        if (millis() - lastFrameSent < frameIntervalMs)
-        {
-            return;
-        }
-
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (fb == nullptr)
-        {
-            return;
-        }
-
-        uint8_t* outImg = fb->buf;
-        size_t outImgSize = fb->len;
-
-        if (streamInference)
-        {
-            InferenceUtil::InferenceOutput output{};
-            InferenceUtil::runInferenceFromImage(output, fb->buf, fb->len, &outImg, &outImgSize);
-
-            if (outImg != nullptr)
-            {
-                InferenceUtil::drawMarkers(output, outImg);
-
-                uint8_t *jpegOut = nullptr;
-                size_t jpegOutSize = 0;
-                bool res = fmt2jpg(outImg, outImgSize, MODEL_INPUT_WIDTH, MODEL_INPUT_HEIGHT, PIXFORMAT_RGB888, 90, &jpegOut, &jpegOutSize);
-                free(outImg);
-                outImg = nullptr;
-                if (res)
-                {
-                    outImg = jpegOut;
-                    outImgSize = jpegOutSize;
-                }
-            }
-        }
-
-        if (outImg != nullptr)
-        {
-            currentClient.printf(
-                "--frame\r\n"
-                "Content-Type: image/jpeg\r\n"
-                "Content-Length: %u\r\n\r\n",
-                outImgSize
-            );
-
-            currentClient.write(outImg, outImgSize);
-            currentClient.print("\r\n");
-            currentClient.flush();
-
-            free(outImg);
-        }
-        else
-        {
-            constexpr char message[] = "Error capturing frame or running inference";
-
-            currentClient.printf(
-                "--frame\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: %u\r\n\r\n"
-                "%s\r\n"
-                "--frame\r\n",
-                strlen(message),
-                message
-            );
-            currentClient.stop();
-        }
-
-        esp_camera_fb_return(fb);
-        lastFrameSent = millis();
     }
 }
 

@@ -48,7 +48,7 @@ inline camera_config_t camConfig = {
     .pin_href = HREF_GPIO_NUM,
     .pin_pclk = PCLK_GPIO_NUM,
 
-    .xclk_freq_hz = 10000000,
+    .xclk_freq_hz = 20000000, // Below 20mhz all direct sunlight is pink tinted
     .ledc_timer = LEDC_TIMER_2,
     .ledc_channel = LEDC_CHANNEL_2,
     .pixel_format = PIXFORMAT_JPEG,
