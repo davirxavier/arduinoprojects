@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-arduino-nano", "id": "nano", "top": -24, "left": -96.5, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": 98.4,
+      "left": -38.2,
+      "rotate": 180,
+      "attrs": { "color": "red", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": 184.8,
+      "left": -47.8,
+      "rotate": 180,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 80.75,
+      "left": 28.8,
+      "attrs": { "value": "10000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 195.95,
+      "left": 38.4,
+      "attrs": { "value": "10000" }
+    },
+    {
+      "type": "wokwi-7segment",
+      "id": "sevseg1",
+      "top": -157.38,
+      "left": -94.88,
+      "attrs": { "digits": "4", "colon": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn3",
+      "top": -13,
+      "left": 211.2,
+      "attrs": { "color": "yellow", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn4",
+      "top": 73.4,
+      "left": 211.2,
+      "attrs": { "color": "blue", "xray": "1" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": -5.65,
+      "left": 124.8,
+      "attrs": { "value": "10000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r4",
+      "top": 71.15,
+      "left": 115.2,
+      "attrs": { "value": "10000" }
+    }
+  ],
+  "connections": [
+    [ "r1:1", "btn1:2.l", "green", [ "v0" ] ],
+    [ "r1:2", "nano:GND.1", "green", [ "v0" ] ],
+    [ "r1:1", "nano:A6", "green", [ "v0" ] ],
+    [ "r2:1", "btn2:2.l", "green", [ "v0", "h-28.8" ] ],
+    [ "r2:2", "nano:GND.1", "green", [ "v0" ] ],
+    [ "btn2:2.l", "nano:A7", "green", [ "h0" ] ],
+    [ "btn1:1.r", "nano:5V", "green", [ "v0" ] ],
+    [ "btn2:1.r", "nano:5V", "green", [ "v0" ] ],
+    [ "sevseg1:A", "nano:4", "green", [ "v0" ] ],
+    [ "sevseg1:F", "nano:5", "green", [ "v0" ] ],
+    [ "sevseg1:B", "nano:6", "green", [ "v0" ] ],
+    [ "sevseg1:D", "nano:7", "green", [ "v0" ] ],
+    [ "sevseg1:E", "nano:8", "green", [ "v0" ] ],
+    [ "sevseg1:C", "nano:9", "green", [ "v0" ] ],
+    [ "sevseg1:G", "nano:10", "green", [ "v0" ] ],
+    [ "sevseg1:DIG1", "nano:11", "green", [ "v0" ] ],
+    [ "sevseg1:DIG2", "nano:12", "green", [ "v0" ] ],
+    [ "sevseg1:DIG3", "nano:13", "green", [ "v0" ] ],
+    [ "sevseg1:DIG4", "nano:A0", "green", [ "v0" ] ],
+    [ "sevseg1:CLN", "nano:GND.1", "green", [ "h0" ] ],
+    [ "r4:1", "nano:5V", "green", [ "v0" ] ],
+    [ "r3:1", "nano:5V", "green", [ "v0" ] ],
+    [ "r4:2", "btn4:1.l", "green", [ "v0" ] ],
+    [ "r3:2", "btn3:1.l", "green", [ "v0" ] ],
+    [ "btn3:1.l", "nano:A2", "green", [ "h0" ] ],
+    [ "btn4:1.l", "nano:A3", "green", [ "h0" ] ],
+    [ "btn4:2.r", "nano:GND.1", "green", [ "h0" ] ],
+    [ "btn3:2.r", "nano:GND.1", "green", [ "h0" ] ],
+    [ "sevseg1:DP", "nano:A1", "green", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
