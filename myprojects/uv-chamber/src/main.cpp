@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <display.h>
 #include <OneButton.h>
+#include <EEPROMWearLevel.h>
+#include <buzzer.h>
 
 #define RELAY_PIN 2
 #define BUZZ_PIN 3
@@ -10,12 +12,15 @@
 #define MODE_TIMER_PIN A2
 #define MODE_CHRONO_PIN A3
 
-#define TIMER_CAP ((60 * 99) + 99) // max of 99m:99s
+#define EEPROM_VER 1
+#define EEPROM_INDEXES 2
 
 OneButton timeButton = {};
 OneButton startButton = {};
 OneButton timerModeButton(MODE_TIMER_PIN);
 OneButton chronoModeButton(MODE_CHRONO_PIN);
+
+DxBuzzer buzzer(BUZZ_PIN);
 
 enum Mode
 {
@@ -41,6 +46,8 @@ volatile bool timerIncrement = false;
 
 bool hasTimePress = false;
 bool hasStartPress = false;
+bool ignoreStartPress = false;
+unsigned long lastStartPress = 0;
 
 void addTimerVal(long val)
 {
@@ -51,10 +58,6 @@ void addTimerVal(long val)
     if (secondsTimer < 0)
     {
         secondsTimer = 0;
-    }
-    else if (secondsTimer >= TIMER_CAP)
-    {
-        secondsTimer = TIMER_CAP;
     }
 
     SREG = oldSREG;
@@ -71,10 +74,6 @@ void setTimerVal(long val)
     {
         secondsTimer = 0;
     }
-    else if (secondsTimer >= TIMER_CAP)
-    {
-        secondsTimer = TIMER_CAP;
-    }
 
     SREG = oldSREG;
     needsDisplayUpdate = true;
@@ -86,8 +85,19 @@ long getTimerVal()
     noInterrupts();
     long copy = secondsTimer;
     SREG = oldSREG;
-    needsDisplayUpdate = true;
     return copy;
+}
+
+void save()
+{
+    EEPROMwl.put(currentMode == MODE_TIMER ? 0 : 1, secondsTimer);
+}
+
+void recover()
+{
+    long val = 0;
+    EEPROMwl.get(currentMode == MODE_TIMER ? 0 : 1, val);
+    setTimerVal(val);
 }
 
 void changeState(State newState)
@@ -97,9 +107,24 @@ void changeState(State newState)
         return;
     }
 
+    if (newState == COUNTING && currentMode == MODE_TIMER && getTimerVal() <= 0)
+    {
+        return;
+    }
+
+    if (currentMode == MODE_TIMER && newState == COUNTING && currentState == STANDBY)
+    {
+        save();
+    }
+
+    if (currentMode == MODE_CHRONO && newState == STANDBY && currentState > STANDBY)
+    {
+        save();
+    }
+
     if (newState == STANDBY)
     {
-        noTone(BUZZ_PIN);
+        buzzer.stop();
     }
 
     if (currentState == STANDBY && newState == COUNTING && currentMode != MODE_TIMER)
@@ -107,7 +132,17 @@ void changeState(State newState)
         setTimerVal(1);
     }
 
-    SevenDisplay::flashing = newState == PAUSED;
+    if (newState == COUNTING)
+    {
+        buzzer.beep(150);
+        digitalWrite(RELAY_PIN, HIGH);
+    }
+    else
+    {
+        digitalWrite(RELAY_PIN, LOW);
+    }
+
+    SevenDisplay::flashing = newState == PAUSED || newState == PLAYING_ALERT;
     currentState = newState;
     Serial.print("State change: ");
     Serial.println(newState);
@@ -129,6 +164,22 @@ void onModeEvent(Mode mode)
         changeState(STANDBY);
     }
 
+    if (currentMode == OFF)
+    {
+        SevenDisplay::on = false;
+        return;
+    }
+
+    if (currentState == STANDBY)
+    {
+        recover();
+    }
+    else
+    {
+        setTimerVal(0);
+    }
+
+    SevenDisplay::on = true;
     digitalWrite(TIMER_LED_PIN, currentMode == MODE_TIMER ? SevenDisplay::SON : SevenDisplay::SOFF);
     timerIncrement = currentMode != MODE_TIMER;
     needsDisplayUpdate = true;
@@ -149,14 +200,24 @@ void onTimeClick()
 void onTimePress()
 {
     Serial.println("Time press");
+    if (ignoreStartPress)
+    {
+        return;
+    }
+
+    hasTimePress = true;
 
     if (currentState != STANDBY || currentMode != MODE_TIMER)
     {
         return;
     }
 
+    if (hasStartPress || millis() - lastStartPress < 1000)
+    {
+        return;
+    }
+
     addTimerVal(10);
-    hasTimePress = true;
 }
 
 void onTimeIdle()
@@ -180,30 +241,48 @@ void onStartClick()
     {
         changeState(COUNTING);
     }
+    else if (currentState == PLAYING_ALERT)
+    {
+        changeState(STANDBY);
+    }
 }
 
 void onStartPress()
 {
     Serial.println("Start press");
-    if (currentState != STANDBY)
+    if (ignoreStartPress)
     {
         return;
     }
 
-    if (hasTimePress)
+    if (currentState != STANDBY)
+    {
+        ignoreStartPress = true;
+        changeState(STANDBY);
+        if (currentMode == MODE_TIMER)
+        {
+            recover();
+        }
+        return;
+    }
+
+    if (hasTimePress && currentState == STANDBY)
     {
         setTimerVal(0);
+        lastStartPress = millis();
         return;
     }
 
     hasStartPress = true;
     changeState(COUNTING);
+    ignoreStartPress = true;
 }
 
 void onStartIdle()
 {
     Serial.println("Start idle");
     hasStartPress = false;
+    ignoreStartPress = false;
 }
 
 void setupDisplay()
@@ -239,12 +318,13 @@ ISR(TIMER1_COMPA_vect) {
     {
         timerCounter = 0;
 
-        if (secondsTimer > 0 && secondsTimer < TIMER_CAP)
+        if (secondsTimer > 0)
         {
-            addTimerVal(timerIncrement ? 1 : -1);
-            if (secondsTimer <= 0 || secondsTimer >= TIMER_CAP)
+            secondsTimer += (timerIncrement ? 1 : -1);
+            needsDisplayUpdate = true;
+            if (secondsTimer <= 0)
             {
-                secondsTimer = secondsTimer <= 0 ? 0 : TIMER_CAP;
+                secondsTimer = 0;
                 finishPending = true;
             }
         }
@@ -254,29 +334,39 @@ ISR(TIMER1_COMPA_vect) {
 void setup()
 {
     Serial.begin(9600);
+    EEPROMwl.begin(EEPROM_VER, EEPROM_INDEXES);
+
     setupDisplay();
 
     timeButton.attachClick(onTimeClick);
+    timeButton.setDebounceMs(15);
     timeButton.setLongPressIntervalMs(150);
     timeButton.attachLongPressStart(onTimePress);
     timeButton.attachDuringLongPress(onTimePress);
-    timeButton.attachIdle(onTimeIdle);
+    timeButton.attachLongPressStop(onTimeIdle);
 
     startButton.attachClick(onStartClick);
     startButton.setLongPressIntervalMs(150);
     startButton.attachLongPressStart(onStartPress);
     startButton.attachDuringLongPress(onStartPress);
-    startButton.attachIdle(onStartIdle);
+    startButton.attachLongPressStop(onStartIdle);
 
-    timerModeButton.attachClick([]() {onModeEvent(MODE_TIMER);});
-    // timerModeButton.attachIdle([]() {onModeEvent(OFF);});
-    chronoModeButton.attachClick([]() {onModeEvent(MODE_CHRONO);});
-    // chronoModeButton.attachIdle([]() {onModeEvent(OFF);});
+    timerModeButton.attachLongPressStart([]() {onModeEvent(MODE_TIMER);});
+    timerModeButton.attachLongPressStop([]() {onModeEvent(OFF);});
+    chronoModeButton.attachLongPressStart([]() {onModeEvent(MODE_CHRONO);});
+    chronoModeButton.attachLongPressStop([]() {onModeEvent(OFF);});
 
     pinMode(TIMER_LED_PIN, OUTPUT);
     digitalWrite(TIMER_LED_PIN, SevenDisplay::SOFF);
 
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, LOW);
+    pinMode(BUZZ_PIN, OUTPUT);
+    noTone(BUZZ_PIN);
+
+    recover();
     changeState(STANDBY);
+    onModeEvent(OFF);
     setTimerVal(0);
     Serial.println("Started");
 }
@@ -285,9 +375,9 @@ void loop()
 {
     timeButton.tick(analogRead(BTN_TIME_PIN) > 512);
     startButton.tick(analogRead(BTN_START_PIN) > 512);
-
     timerModeButton.tick();
     chronoModeButton.tick();
+    buzzer.update();
 
     if (needsDisplayUpdate)
     {
@@ -296,18 +386,25 @@ void loop()
         needsDisplayUpdate = false;
         interrupts();
 
-        copy = (copy / 60) * 100 + (copy % 60);
-        SevenDisplay::updateDisplay(copy, true);
+        int hours = copy / 3600;
+        int minutes = (copy % 3600) / 60;
+        int seconds = copy % 60;
+
+        int displayValue;
+        if (hours > 0) {
+            // hh:mm
+            displayValue = hours * 100 + minutes;
+        } else {
+            // mm:ss
+            displayValue = minutes * 100 + seconds;
+        }
+        SevenDisplay::updateDisplay(displayValue, true);
     }
 
     if (finishPending)
     {
         finishPending = false;
         changeState(PLAYING_ALERT);
-    }
-
-    if (currentState == PLAYING_ALERT)
-    {
-        // TODO
+        buzzer.beep(250, UINT32_MAX, 150);
     }
 }

@@ -45,6 +45,7 @@ namespace SevenDisplay
 
     volatile int8_t currentDisplayNumbers[4] = {-1, -1, -1, -1};
     volatile bool flashing = false;
+    volatile bool on = true;
 
     inline void updateDisplay(int val, bool leadingZeroes = false)
     {
@@ -84,7 +85,7 @@ namespace SevenDisplay
             flashFlag = !flashFlag;
         }
 
-        if (flashing && !flashFlag)
+        if ((flashing && !flashFlag) || !on)
         {
             for (const int8_t d : digitPins)
             {

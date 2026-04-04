@@ -10,7 +10,7 @@
       "top": 98.4,
       "left": -38.2,
       "rotate": 180,
-      "attrs": { "color": "red", "xray": "1" }
+      "attrs": { "color": "red", "xray": "1", "key": "1" }
     },
     {
       "type": "wokwi-pushbutton",
@@ -18,7 +18,7 @@
       "top": 184.8,
       "left": -47.8,
       "rotate": 180,
-      "attrs": { "color": "green", "xray": "1" }
+      "attrs": { "color": "green", "xray": "1", "key": "2" }
     },
     {
       "type": "wokwi-resistor",
@@ -39,21 +39,7 @@
       "id": "sevseg1",
       "top": -157.38,
       "left": -94.88,
-      "attrs": { "digits": "4", "colon": "1" }
-    },
-    {
-      "type": "wokwi-pushbutton",
-      "id": "btn3",
-      "top": -13,
-      "left": 211.2,
-      "attrs": { "color": "yellow", "xray": "1" }
-    },
-    {
-      "type": "wokwi-pushbutton",
-      "id": "btn4",
-      "top": 73.4,
-      "left": 211.2,
-      "attrs": { "color": "blue", "xray": "1" }
+      "attrs": { "digits": "4", "colon": "0" }
     },
     {
       "type": "wokwi-resistor",
@@ -68,7 +54,17 @@
       "top": 71.15,
       "left": 115.2,
       "attrs": { "value": "10000" }
-    }
+    },
+    { "type": "wokwi-relay-module", "id": "relay1", "top": -153.4, "left": 153.6, "attrs": {} },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": -276,
+      "left": 49.8,
+      "attrs": { "volume": "0.1" }
+    },
+    { "type": "wokwi-slide-switch", "id": "sw1", "top": -34, "left": 204.7, "attrs": {} },
+    { "type": "wokwi-slide-switch", "id": "sw2", "top": 62, "left": 204.7, "attrs": {} }
   ],
   "connections": [
     [ "r1:1", "btn1:2.l", "green", [ "v0" ] ],
@@ -90,16 +86,20 @@
     [ "sevseg1:DIG2", "nano:12", "green", [ "v0" ] ],
     [ "sevseg1:DIG3", "nano:13", "green", [ "v0" ] ],
     [ "sevseg1:DIG4", "nano:A0", "green", [ "v0" ] ],
-    [ "sevseg1:CLN", "nano:GND.1", "green", [ "h0" ] ],
     [ "r4:1", "nano:5V", "green", [ "v0" ] ],
     [ "r3:1", "nano:5V", "green", [ "v0" ] ],
-    [ "r4:2", "btn4:1.l", "green", [ "v0" ] ],
-    [ "r3:2", "btn3:1.l", "green", [ "v0" ] ],
-    [ "btn3:1.l", "nano:A2", "green", [ "h0" ] ],
-    [ "btn4:1.l", "nano:A3", "green", [ "h0" ] ],
-    [ "btn4:2.r", "nano:GND.1", "green", [ "h0" ] ],
-    [ "btn3:2.r", "nano:GND.1", "green", [ "h0" ] ],
-    [ "sevseg1:DP", "nano:A1", "green", [ "v0" ] ]
+    [ "sevseg1:DP", "nano:A1", "green", [ "v0" ] ],
+    [ "nano:GND.2", "relay1:GND", "black", [ "v-105.6", "h124.8" ] ],
+    [ "nano:5V", "relay1:VCC", "red", [ "v0" ] ],
+    [ "relay1:IN", "nano:2", "green", [ "h0" ] ],
+    [ "bz1:1", "nano:GND.2", "green", [ "v0" ] ],
+    [ "bz1:2", "nano:3", "green", [ "v0" ] ],
+    [ "r3:2", "nano:A2", "green", [ "v0" ] ],
+    [ "sw1:2", "r3:2", "green", [ "v0" ] ],
+    [ "sw1:3", "nano:GND.1", "green", [ "v0" ] ],
+    [ "r4:2", "sw2:2", "green", [ "v0" ] ],
+    [ "r4:2", "nano:A3", "green", [ "v0" ] ],
+    [ "sw2:3", "nano:GND.1", "green", [ "v0" ] ]
   ],
   "dependencies": {}
 }
