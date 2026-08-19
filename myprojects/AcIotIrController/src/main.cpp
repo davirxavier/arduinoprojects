@@ -1,308 +1,208 @@
-#define SINRICPRO_NOSSL
-#define FIRMWARE_VERSION "1.1.2"
-
 #include <Arduino.h>
-#include "ArduinoJson.h"
-#include "LittleFS.h"
-#include "TZ.h"
-#include "Capabilities/TemperatureSensor.h"
-#include "weather-utils.h"
-#include "ir_Samsung.h"
-#include "SinricPro.h"
-#include "SinricProWindowAC.h"
-#include "esp-config-page.h"
-#include "esp-config-page-logging.h"
+#include <secrets.h>
 
-#define AP_NAME "ESP-AC-CONTROL-1"
-#define AP_PASSWORD "admin13246"
-#define DATA_FILE "data"
-#define TEMP_UPDATE_INTERVAL 600000
+#define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#define MQTTO_ENABLE_LOGGING
+#include <esp-config-page.h>
+#include <Mosquetteer.h>
+#include <ir_Samsung.h>
 
-class SinricACWithTemp : public SinricProWindowAC, public TemperatureSensor<SinricACWithTemp> {
-    friend class TemperatureSensor<SinricACWithTemp>;
-public:
-    SinricACWithTemp(const String &deviceId) : SinricProWindowAC(deviceId) {}
-};
+#define IR_PIN 0
+#define TEMP_ID "temp"
+#define HUMIDITY_ID "hum"
+#define DEW_POINT_ID "dewpoint"
+#define TARGET_TEMP_ID "target_temp"
+#define FAN_SPEED_ID "fan"
+#define MODE_ID "mode"
+#define AC_MODE_AUTO "AUTO"
+#define AC_MODE_DRY "DRY"
+#define AC_MODE_COOL "COOL"
 
-struct AcData {
-    uint8_t targetTemp;
-    uint8_t roomTemp;
-    uint8_t fanSpeed;
-    uint8_t degreesSubtract;
-    bool isAutoMode;
-    bool isOn;
-    bool swing;
-    bool isEco;
-} __attribute__((packed));
+#define FAN_AUTO "AUTO"
+#define FAN_LOW "BAIXA"
+#define FAN_MED "MED"
+#define FAN_HIGH "ALTA"
+#define FAN_TURBO "TURBO"
 
-dxweather::WeatherInfo weatherInfo{};
-AcData data{};
-unsigned long lastTempEvent;
-SinricACWithTemp *ac;
-HTTPClient http;
-WiFiClientSecure client;
-IRSamsungAc acIr(4);
-bool firstUpdate = false;
-bool sinricInit = false;
+#define MIN_FAN_SPEED 1
+#define MIN_SETPOINT 16
+#define MAX_SETPOINT 30
+
+Mosquetteer mosquetteer;
+bool mqttInit = false;
 
 ESP_CONFIG_PAGE::WEBSERVER_T server(80);
-auto adminUsername = new ESP_CONFIG_PAGE::EnvVar("ADMIN_USER");
-auto adminPassword = new ESP_CONFIG_PAGE::EnvVar("ADMIN_PASS");
-auto weatherApiKey = new ESP_CONFIG_PAGE::EnvVar("WEATHER_API_KEY");
-auto lat = new ESP_CONFIG_PAGE::EnvVar("WEATHER_LAT");
-auto lon = new ESP_CONFIG_PAGE::EnvVar("WEATHER_LON");
-auto appKey = new ESP_CONFIG_PAGE::EnvVar("SINRIC_APP_KEY");
-auto appSecret = new ESP_CONFIG_PAGE::EnvVar("SINRIC_APP_SECRET");
-auto deviceId = new ESP_CONFIG_PAGE::EnvVar("SINRIC_DEVICE_ID");
+IRSamsungAc ac(IR_PIN);
 
-ESP_CONFIG_PAGE_LOGGING::ConfigPageSerial webserial(Serial);
-#define LOG(str) webserial.print(str)
-#define LOGN(str) webserial.println(str)
-#define LOGF(str, params...) webserial.printf(str, params)
+const char *modeOptions[] = {
+    AC_MODE_AUTO,
+    AC_MODE_DRY,
+    AC_MODE_COOL,
+};
+size_t optionsSize = 3;
 
-void(* resetFunc) (void) = 0;
+const char *fanOptions[] = {
+    FAN_AUTO,
+    FAN_LOW,
+    FAN_MED,
+    FAN_HIGH,
+    FAN_TURBO,
+};
+size_t fanOptionsSize = 5;
+int fanSpeedByMode[] = {kSamsungAcFanAuto, kSamsungAcFanLow, kSamsungAcFanMed, kSamsungAcFanHigh, kSamsungAcFanTurbo};
 
-void IRAM_ATTR resetConfig() {
-    ESP.eraseConfig();
+struct AcSettings
+{
+    int setpoint = 30;
+    char userMode[16] = AC_MODE_COOL;
+    char fanMode[16] = FAN_LOW;
+};
+AcSettings settings{};
 
-    if (LittleFS.exists(DATA_FILE)) {
-        LittleFS.remove(DATA_FILE);
-    }
+unsigned long sensorUpdateInterval = 5000;
+unsigned long lastUpdatedSensors = -sensorUpdateInterval;
 
-    delay(200);
-    resetFunc();
-}
-
-void updateState() {
-    uint8_t targetTemp = data.targetTemp;
-
-    if (data.isAutoMode) {
-        targetTemp = (data.roomTemp > 30 ? 30 : data.roomTemp);
-        targetTemp = data.roomTemp < 16 ? 16 : (targetTemp - data.degreesSubtract);
-    }
-
-    uint8_t fanSpeedMapping;
-    switch (data.fanSpeed) {
-        case 1:
-            fanSpeedMapping = kSamsungAcFanAuto;
-            break;
-        case 2:
-            fanSpeedMapping = kSamsungAcFanHigh;
-            break;
-        default:
-            fanSpeedMapping = kSamsungAcFanTurbo;
-            break;
-    }
-
-    LOG("Sending state: ");
-    LOG(data.isOn ? "POWER ON, " : "POWER OFF, ");
-    LOG(data.isAutoMode ? "IS AUTO MODE, " : "AUTO MODE DISABLED, ");
-    LOGN("TEMP " + String(targetTemp) + String(data.isAutoMode ? "(AUTO)" : ""));
-
-    acIr.setTemp(targetTemp);
-    acIr.setMode(kSamsungAcCool);
-    acIr.setFan(fanSpeedMapping);
-    acIr.setSwing(data.swing);
-    acIr.setPower(data.isOn);
-    acIr.send();
-
-    ac->sendTargetTemperatureEvent(targetTemp);
-}
-
-void power(bool &on) {
-    data.isOn = on;
-    updateState();
-}
-
-void setTemp(uint8_t temp) {
-    LOGN("Setting temp.");
-    if (data.isAutoMode) {
-        LOGN("Is auto mode, ignoring target temp event.");
-        return;
-    }
-
-    data.targetTemp = temp;
-    updateState();
-}
-
-void setMode(String &mode) {
-    if (mode == "AUTO") {
-        data.isAutoMode = true;
-        data.swing = false;
-        data.isEco = false;
-    } else if (mode == "COOL") {
-        data.isAutoMode = false;
-        data.swing = false;
-        data.isEco = false;
-    } else if (mode == "HEAT") {
-        data.swing = true;
-        data.isEco = false;
-    } else if (mode == "ECO") {
-        data.isEco = true;
-        data.swing = false;
-    }
-
-    updateState();
-}
-
-void setFanSpeed(int &range) {
-    if (data.isEco) {
-        data.degreesSubtract = range-1;
-        ac->sendPushNotification("Diferença de temperatura ajustada para -" + String(range-1) + "ºC.");
-    } else {
-        data.fanSpeed = range;
-    }
-
-    updateState();
-}
-
-void setup() {
-#ifdef ENABLE_LOGGING
-    Serial.begin(9600);
-#else
-    bool enableSerial = false;
-#endif
-
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, HIGH);
-
-    LittleFS.begin();
-
-    char defaultCreds[] = "admin";
-    adminUsername->value = (char*) malloc(strlen(defaultCreds)+1);
-    strcpy(adminUsername->value, defaultCreds);
-
-    adminPassword->value = (char*) malloc(strlen(defaultCreds)+1);
-    strcpy(adminPassword->value, defaultCreds);
-
-    ESP_CONFIG_PAGE::setSerial(&webserial);
-
-    addEnvVar(adminUsername);
-    addEnvVar(adminPassword);
-    addEnvVar(weatherApiKey);
-    addEnvVar(lat);
-    addEnvVar(lon);
-    addEnvVar(appKey);
-    addEnvVar(appSecret);
-    addEnvVar(deviceId);
-
-    ESP_CONFIG_PAGE::setAndUpdateStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("env"));
-    ESP_CONFIG_PAGE::setAPConfig("ESP32-SAC-IOT", "adminadmin");
-    ESP_CONFIG_PAGE::tryConnectWifi(false);
-    ESP_CONFIG_PAGE::initModules(&server, String(adminUsername->value), String(adminPassword->value), "ESP32-SAC-IOT");
-
-    dxweather::setup();
-    data.fanSpeed = 1;
-    data.isAutoMode = false;
-    data.targetTemp = 30;
-    data.roomTemp = 30;
-    data.isOn = false;
-    data.isAutoMode = false;
-    data.degreesSubtract = 1;
-    data.isEco = false;
-
-    server.begin();
-    ESP_CONFIG_PAGE_LOGGING::enableLogging(String(adminUsername->value), String(adminPassword->value), webserial);
-
-    LOGN("Startup done");
-    delay(5000);
-}
-
-void loop() {
-    SinricPro.handle();
-
-    if (!sinricInit && ESP_CONFIG_PAGE::isWiFiReady())
+int getFan(const char *mode)
+{
+    int speed = kSamsungAcFanLow;
+    for (int i = 0; i < fanOptionsSize; i++)
     {
-        LOGN("Startup sinric....");
-        acIr.begin();
-        SinricACWithTemp &localAc = SinricPro[deviceId->value];
-        ac = &localAc;
+        if (strcasecmp(fanOptions[i], mode) == 0)
+        {
+            return fanSpeedByMode[i];
+        }
+    }
+    return speed;
+}
 
-        ac->onPowerState([](const String &deviceId, bool &state) {
-            LOG("SINRIC_EVENT: Turn ");
-            LOGN(state ? "ON" : "OFF");
-            power(state);
-            return true;
-        });
+void updateSensors()
+{
+    float temp = 30;
+    float humidity = 50;
 
-        ac->onTargetTemperature([](const String &deviceId, float &temperature) {
-            LOG("SINRIC_EVENT: Set target temperature to ");
-            LOGN(String(temperature));
-            setTemp(temperature);
-            return true;
-        });
+    float alpha = ((17.27 * temp) / (237.7 + temp)) + log(humidity / 100.0);
+    float dewPoint = (237.7 * alpha) / (17.27 - alpha);
 
-        ac->onThermostatMode([](const String &deviceId, String &mode) {
-            LOG("SINRIC_EVENT: Set mode to ");
-            LOGN(mode);
-            setMode(mode);
-            return true;
-        });
+    int setpointOffset = 0;
+    int actualMode = kSamsungAcCool;
+    int actualFanSpeed = getFan(settings.fanMode);
 
-        ac->onRangeValue([](const String &deviceId, int &rangeValue) {
-            LOG("SINRIC_EVENT: Set fan speed to ");
-            LOGN(String(rangeValue));
-            setFanSpeed(rangeValue);
-            return true;
-        });
-
-        // setup SinricPro
-        SinricPro.onConnected([](){ LOGN("Connected to SinricPro"); });
-        SinricPro.onDisconnected([](){ LOGN("Disconnected from SinricPro"); });
-
-        SinricPro.begin(appKey->value, appSecret->value);
-        ac->sendPowerStateEvent(data.isOn);
-        ac->sendTargetTemperatureEvent(data.targetTemp);
-        ac->sendTemperatureEvent(data.roomTemp);
-        ac->sendRangeValueEvent(data.fanSpeed);
-        ac->sendThermostatModeEvent(data.isAutoMode ? "AUTO" : "COOL");
-
-        lastTempEvent = -TEMP_UPDATE_INTERVAL-1;
-        sinricInit = true;
+    if (strcasecmp(AC_MODE_AUTO, settings.userMode) == 0)
+    {
+        if (dewPoint >= 18.5)
+        {
+            setpointOffset = -99;
+            actualMode = kSamsungAcDry;
+            actualFanSpeed = kSamsungAcFanTurbo;
+        }
+        else if (dewPoint >= 14.5)
+        {
+            setpointOffset = -4;
+            actualMode = kSamsungAcDry;
+            actualFanSpeed = kSamsungAcFanTurbo;
+        }
+        else if (dewPoint >= 13)
+        {
+            setpointOffset = -2;
+            actualMode = kSamsungAcCool;
+        }
+        else
+        {
+            setpointOffset = 0;
+            actualMode = kSamsungAcCool;
+        }
+    }
+    else
+    {
+        actualMode = strcasecmp(AC_MODE_COOL, settings.userMode) == 0 ? kSamsungAcCool : kSamsungAcDry;
     }
 
-    if (sinricInit && SinricPro.isConnected() && data.isOn && millis() - lastTempEvent > TEMP_UPDATE_INTERVAL) {
-        digitalWrite(LED_BUILTIN, LOW);
-        unsigned long startMillis = millis();
+    ac.setMode(actualMode);
+    ac.setFan(actualFanSpeed);
+    ac.setTemp(constrain(settings.setpoint + setpointOffset, MIN_SETPOINT, MAX_SETPOINT));
 
-        LOGN("Getting weather info...");
-        dxweather::getWeatherInfo(weatherApiKey->value, lat->value, lon->value, weatherInfo);
+    if (mqttInit)
+    {
+        mosquetteer.sendState(TEMP_ID, temp);
+        mosquetteer.sendState(HUMIDITY_ID, humidity);
+        mosquetteer.sendState(DEW_POINT_ID, dewPoint);
+    }
+}
 
-        if (weatherInfo.hasError) {
-            LOGF("Error getting weather info: %s\n", weatherInfo.error.c_str());
-        } else {
-            LOGN("Success.");
+void setup()
+{
+    delay(1500);
+    Serial.begin(115200);
 
-            LOGF("Ambient temperature is %f, feelsLike is %f\n", weatherInfo.temp, weatherInfo.feelsLike);
+    ac.begin();
 
-            float rounded = round(weatherInfo.temp);
-            LOGF("Rounded temp to: %f\n", rounded);
-            ac->sendTemperatureEvent(rounded, weatherInfo.humidity);
-            LOGN("Temperature updated.");
+    ESP_CONFIG_PAGE::setAPConfig("ESP32-AC-CONTROL", "adminadmin");
+    ESP_CONFIG_PAGE::initModules(&server, CONFIG_PAGE_USER, CONFIG_PAGE_PASS, "ESP32-AC-CONTROL");
+    server.begin();
 
-            if (rounded != data.roomTemp || !firstUpdate) {
-                ac->sendPushNotification("Temperatura ambiente é " + String(rounded) + "°C, alterando "
-                                           "temperatura do ar condicionado "
-                                           "automaticamente para " + String(data.roomTemp - data.degreesSubtract) + "°C.");
+    mosquetteer.setClientConfig(MQTT_URL, MQTT_USER, MQTT_PASS);
+    mosquetteer.setDeviceInfo("esp_ac_controller", "AC Controller");
+    mosquetteer.setTlsConfig(cacert);
 
-                LOGN("Temperature is different from current, updating AC unit.");
-                data.roomTemp = rounded;
-                updateState();
-            }
+    MosquetteerShared::SensorConfig sensorConfig{};
+    sensorConfig.stateClass = MosquetteerShared::MEASUREMENT;
+    strcpy(sensorConfig.unit.unit, "\xC2\xBA" "C");
+    mosquetteer.define(TEMP_ID, "Temperature", MosquetteerShared::SENSOR, &sensorConfig);
 
-            if (!firstUpdate) {
-                ac->sendPushNotification("Sistema automático para ar condicionado ligado, diferença de temperatura configurada é -" +
-                                         String(data.degreesSubtract) + "°C.");
-                firstUpdate = true;
-            }
-        }
+    sensorConfig.deviceClass = MosquetteerClasses::HUMIDITY;
+    strcpy(sensorConfig.unit.unit, "%");
+    mosquetteer.define(HUMIDITY_ID, "Humidity", MosquetteerShared::SENSOR, &sensorConfig);
 
-        unsigned long endMillis = millis();
-        if (endMillis - startMillis < 2000) {
-            delay(2000-(endMillis-startMillis));
-        }
-        digitalWrite(LED_BUILTIN, HIGH);
+    strcpy(sensorConfig.unit.unit, "\xC2\xBA" "C");
+    mosquetteer.define(DEW_POINT_ID, "Dew Point", MosquetteerShared::SENSOR, &sensorConfig);
 
-        lastTempEvent = millis();
+    MosquetteerShared::SelectConfig selectConfig{};
+    selectConfig.options = modeOptions;
+    selectConfig.optionsCount = optionsSize;
+    mosquetteer.define(MODE_ID, "Mode", MosquetteerShared::SELECT, &selectConfig);
+    mosquetteer.onCommand(MODE_ID, [](const MosquetteerProp &prop)
+    {
+        strcpy(settings.userMode, prop.toString());
+        mosquetteer.sendState(MODE_ID, prop.toString());
+    });
+
+    MosquetteerShared::NumberConfig numberConfig{};
+    numberConfig.minMax.min = MIN_SETPOINT;
+    numberConfig.minMax.max = MAX_SETPOINT;
+    numberConfig.step = 1;
+    strcpy(numberConfig.unit.unit, "\xC2\xBA" "C");
+    mosquetteer.define(TARGET_TEMP_ID, "Target Temp", MosquetteerShared::NUMBER, &numberConfig);
+    mosquetteer.onCommand(TARGET_TEMP_ID, [](const MosquetteerProp &prop)
+   {
+       settings.setpoint = prop.toInt();
+       mosquetteer.sendState(TARGET_TEMP_ID, prop.toString());
+   });
+
+    numberConfig.unit.unit[0] = 0;
+    numberConfig.minMax.min = MIN_FAN_SPEED;
+    numberConfig.minMax.max = MAX_FAN_SPEED;
+    mosquetteer.define(FAN_SPEED_ID, "Fan Speed", MosquetteerShared::NUMBER, &numberConfig);
+    mosquetteer.onCommand(FAN_SPEED_ID, [](const MosquetteerProp &prop)
+   {
+       settings.setpoint = prop.toInt();
+       mosquetteer.sendState(FAN_SPEED_ID, prop.toString());
+   });
+}
+
+void loop()
+{
+    ESP_CONFIG_PAGE::loop();
+    server.handleClient();
+
+    if (!mqttInit && WiFi.status() == WL_CONNECTED)
+    {
+        mqttInit = true;
+        mosquetteer.begin();
+    }
+
+    if (millis() - lastUpdatedSensors > sensorUpdateInterval)
+    {
+        updateSensors();
+        lastUpdatedSensors = millis();
     }
 }

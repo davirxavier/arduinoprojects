@@ -1,0 +1,7 @@
+Dew Point (°C),Dew Point (°F),Human Perception,Comfort Level,Recommended AC Action
+"< 10","< 50","Dry / Crisp","Chilly to dry","Off / Fan Only: Air is dry; 24°C will feel cold. Raise setpoint to 25°C–26°C."
+"10 – 12","50 – 54","Refreshing","Ideal comfort","Low Cool: Minimal cooling load. Run higher setpoint or low fan speed."
+"13 – 15","55 – 59","Comfortable","Optimal","Standard Cool Mode: Maintain baseline target temperature (24°C)."
+"16 – 18","60 – 64","Sticky / Clammy","Moderately humid","Target Offset: Lower setpoint by 1°C–2°C (22°C–23°C) to run compressor longer."
+"19 – 21","65 – 69","Muggy / Heavy","Uncomfortable","Dry Mode / High Cool: Sweat evaporation degrades rapidly. Prioritize dehumidification."
+"> 21","> 70","Oppressive","Sweltering","Maximum Dry Mode: Extreme latent heat load. Run Dry Mode or low target (20°C–21°C)."
