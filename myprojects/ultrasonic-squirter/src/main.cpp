@@ -54,9 +54,6 @@ ESP_CONFIG_PAGE::EnvVar* webapiKey = new ESP_CONFIG_PAGE::EnvVar("EMBER_WEBAPI_K
 ESP_CONFIG_PAGE::EnvVar* deviceId = new ESP_CONFIG_PAGE::EnvVar("EMBER_DEVICE_ID", "");
 
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, 200);
-unsigned long lastPing;
-unsigned long pingReadings[PING_READINGS] = {};
-uint8_t currentReading = 0;
 
 unsigned long squirtTimeout = 0;
 uint8_t successiveSquirtCount = 0;
@@ -66,12 +63,9 @@ ESP_CONFIG_PAGE::WEBSERVER_T server(80);
 EmberIot* ember = nullptr;
 FCMEmberNotifications emberNotification(gcmEmail, gcmPrivateKey);
 
-bool isOn = false;
+bool isOn = true;
 
 unsigned long lastSentNotification = 0;
-bool hasSquirt = false;
-unsigned long pumpTimer = 0;
-unsigned long lastWaterLevelUpdate = 0;
 
 int pumpOnTime = 50;
 int minPower = 1;
@@ -159,6 +153,93 @@ int compareULong(const void* a, const void* b) {
     return 0;
 }
 
+void usTask(void *arg)
+{
+    TickType_t interval = pdMS_TO_TICKS(PING_DELAY_MS);
+    TickType_t lastWake = xTaskGetTickCount();
+
+    static unsigned long pingReadings[PING_READINGS] = {};
+    static uint8_t currentReading = 0;
+
+    while (true)
+    {
+        if (!isOn)
+        {
+            vTaskDelayUntil(&lastWake, interval);
+            continue;
+        }
+
+        portENTER_CRITICAL(&capacitanceSpinlock);
+        unsigned long ping = sonar.ping_cm();
+        portEXIT_CRITICAL(&capacitanceSpinlock);
+
+        pingReadings[currentReading] = ping;
+        currentReading++;
+
+        if (currentReading >= PING_READINGS)
+        {
+            qsort(pingReadings, PING_READINGS, sizeof(unsigned long), compareULong);
+
+            unsigned long average = 0;
+            for (size_t i = PING_IGNORE_OUTLIERS; i < PING_READINGS-PING_IGNORE_OUTLIERS; i++)
+            {
+                average = average + pingReadings[i];
+            }
+            average = average / (PING_READINGS-(PING_IGNORE_OUTLIERS*2));
+
+            LOG("Average: ");
+            LOG(average);
+            LOGN("cm");
+
+            if (average == 0)
+            {
+                timesReadingZero++;
+            }
+
+            if (average == 0 && timesReadingZero >= 20)
+            {
+                LOGN("Error reading distance.");
+                if (currentStatus != SQUIRT_SCAN_ERROR)
+                {
+                    currentStatus = SQUIRT_SCAN_ERROR;
+                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
+                    emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
+                }
+            }
+            else if (average < triggerDistanceCm) {
+                timesReadingZero = 0;
+                LOGN("Squirt set.");
+
+                ledcWrite(PUMP_PIN, getPumpPower(average < MIN_DISTANCE_CM ? MIN_DISTANCE_CM : average));
+                vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(pumpOnTime));
+                ledcWrite(PUMP_PIN, 0);
+
+                squirtTimeout = millis();
+
+                successiveSquirtCount++;
+                successiveSquirtResetTimer = millis();
+
+                if (millis() - lastSentNotification > 10000)
+                {
+                    char buf[128];
+                    sprintf(buf, "Objeto detectado a %ldcm, esguichando!", average);
+                    emberNotification.send(deviceName, buf);
+                    lastSentNotification = millis();
+                }
+
+                if (currentStatus == SQUIRT_SCAN_ERROR)
+                {
+                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCANNING);
+                }
+            }
+
+            currentReading = 0;
+        }
+
+        vTaskDelayUntil(&lastWake, interval);
+    }
+}
+
 void setup()
 {
     EmberIotShared::timezoneOffsetSeconds = -(3600*3);
@@ -202,29 +283,24 @@ void setup()
     emberNotification.init(userUid);
     emberNotification.send(deviceName, "Esguichador online.");
 
-    ledcSetup(PUMP_PIN, 500, 8);
-    ledcAttachPin(PUMP_PIN, PUMP_PIN);
+    ledcAttach(PUMP_PIN, 500, 8);
     ledcWrite(PUMP_PIN, 0);
+
+    xTaskCreate(
+        usTask,
+        "ustask",
+        4096,
+        nullptr,
+        3,
+        nullptr);
+
     LOGN("Started");
-    lastPing = millis();
 }
 
 void loop()
 {
-    if (hasSquirt && millis() - pumpTimer > pumpOnTime)
-    {
-        ledcWrite(PUMP_PIN, 0);
-        hasSquirt = false;
-        squirtTimeout = millis();
-    }
-
     server.handleClient();
     ESP_CONFIG_PAGE::loop();
-
-    if (hasSquirt)
-    {
-        return;
-    }
 
     if (WiFi.status() == WL_CONNECTED)
     {
@@ -234,80 +310,5 @@ void loop()
         {
             ember->loop();
         }
-    }
-
-    if (!isOn)
-    {
-        return;
-    }
-
-    if (millis() - lastPing > PING_DELAY_MS) {
-        portENTER_CRITICAL(&capacitanceSpinlock);
-        unsigned long ping = sonar.ping_cm();
-        portEXIT_CRITICAL(&capacitanceSpinlock);
-
-        pingReadings[currentReading] = ping;
-        currentReading++;
-
-        if (currentReading >= PING_READINGS)
-        {
-            qsort(pingReadings, PING_READINGS, sizeof(unsigned long), compareULong);
-
-            unsigned long average = 0;
-            for (size_t i = PING_IGNORE_OUTLIERS; i < PING_READINGS-PING_IGNORE_OUTLIERS; i++)
-            {
-                average = average + pingReadings[i];
-            }
-            average = average / (PING_READINGS-(PING_IGNORE_OUTLIERS*2));
-
-            LOG("Average: ");
-            LOG(average);
-            LOGN("cm");
-
-            if (average == 0)
-            {
-                timesReadingZero++;
-            }
-
-            if (average == 0 && timesReadingZero >= 20)
-            {
-                LOGN("Error reading distance.");
-                if (currentStatus != SQUIRT_SCAN_ERROR)
-                {
-                    currentStatus = SQUIRT_SCAN_ERROR;
-                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCAN_ERROR);
-                    emberNotification.send(deviceName, "Erro ao realizar leitura do sensor ultrassônico.");
-                }
-            }
-            else if (average < triggerDistanceCm) {
-                timesReadingZero = 0;
-                LOGN("Squirt set.");
-                ledcWrite(PUMP_PIN, getPumpPower(average < MIN_DISTANCE_CM ? MIN_DISTANCE_CM : average));
-
-                hasSquirt = true;
-                pumpTimer = millis();
-                squirtTimeout = millis();
-
-                successiveSquirtCount++;
-                successiveSquirtResetTimer = millis();
-
-                if (millis() - lastSentNotification > 10000)
-                {
-                    char buf[128];
-                    sprintf(buf, "Objeto detectado a %ldcm, esguichando!", average);
-                    emberNotification.send(deviceName, buf);
-                    lastSentNotification = millis();
-                }
-
-                if (currentStatus == SQUIRT_SCAN_ERROR)
-                {
-                    ember->channelWrite(STATUS_CHANNEL, SQUIRT_SCANNING);
-                }
-            }
-
-            currentReading = 0;
-        }
-
-        lastPing = millis();
     }
 }

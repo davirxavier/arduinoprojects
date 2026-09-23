@@ -7,8 +7,8 @@
 
 namespace SevenDisplay
 {
-    bool DOFF = LOW;
-    bool DON = HIGH;
+    bool DOFF = HIGH;
+    bool DON = LOW;
     bool SOFF = HIGH;
     bool SON = LOW;
 
@@ -26,8 +26,8 @@ namespace SevenDisplay
     };
 
     // Same order as the enum above
-    constexpr int8_t segmentPins[INVALID] = {4, 5, 6, 7, 8, 9, 10};
-    constexpr int8_t digitPins[4] = {11, 12, 13, A0};
+    constexpr int8_t segmentPins[INVALID] = {A2, 9, A1, 12, A0, 11, A4};
+    constexpr int8_t digitPins[] = {4, 5, 7, 6, A5};
 
     // pins to change by number
     constexpr Segments numberPinMap[10][7] = {
@@ -43,17 +43,46 @@ namespace SevenDisplay
         {TOP, TOP_LEFT, TOP_RIGHT, MIDDLE, BOTTOM_RIGHT, BOTTOM, NONE},
     };
 
-    volatile int8_t currentDisplayNumbers[4] = {-1, -1, -1, -1};
+    bool extraDigitSegments[sizeof(segmentPins)/sizeof(int8_t)] = {};
+
+    const int8_t iconPins[] = {8, 13};
+    bool iconMap[sizeof(digitPins)][sizeof(iconPins)] = {};
+
+    volatile int8_t currentDisplayNumbers[sizeof(digitPins)] = {-1, -1, -1, -1, 0};
     volatile bool flashing = false;
     volatile bool on = true;
 
+    inline void setIcon(int digit, int iconIndex, bool on)
+    {
+        uint8_t oldSREG = SREG;
+        noInterrupts();
+        iconMap[digit][iconIndex] = on;
+        SREG = oldSREG;
+    }
+
+    inline void updateExtraDigit(int segment, bool on)
+    {
+        if (segment < 0 || segment >= sizeof(extraDigitSegments))
+        {
+            return;
+        }
+
+        uint8_t oldSREG = SREG;
+        noInterrupts();
+        extraDigitSegments[segment] = on;
+        SREG = oldSREG;
+    }
+
     inline void updateDisplay(int val, bool leadingZeroes = false)
     {
+        uint8_t oldSREG = SREG;
+        noInterrupts();
         val = abs(val);
         currentDisplayNumbers[0] = val > 999 ? (val / 1000) : (leadingZeroes ? 0 : -1);
         currentDisplayNumbers[1] = val > 99 ? ((val % 1000) / 100) : (leadingZeroes ? 0 : -1);
         currentDisplayNumbers[2] = val > 9 ? ((val % 100) / 10) : (leadingZeroes ? 0 : -1);
         currentDisplayNumbers[3] = val % 10;
+        SREG = oldSREG;
     }
 
     inline void initDisplay()
@@ -68,6 +97,12 @@ namespace SevenDisplay
         {
             pinMode(pin, OUTPUT);
             digitalWrite(pin, DOFF);
+        }
+
+        for (int8_t pin : iconPins)
+        {
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, SOFF);
         }
     }
 
@@ -99,14 +134,14 @@ namespace SevenDisplay
         }
 
         tickCounter++; // one update very 3 ticks = 3ms per digit
-        if (tickCounter < 3)
+        if (tickCounter < 2)
         {
             return;
         }
         tickCounter = 0;
 
         currentDigit++;
-        if (currentDigit > 3)
+        if (currentDigit >= sizeof(digitPins))
         {
             currentDigit = 0;
         }
@@ -128,13 +163,38 @@ namespace SevenDisplay
             digitalWrite(seg, SOFF);
         }
 
-        for (const int8_t seg : numberPinMap[currentNum])
+        if (currentDigit == sizeof(digitPins)-1)
         {
-            if (seg == NONE)
+            for (uint8_t i = 0; i < sizeof(extraDigitSegments); i++)
             {
-                continue;
+                if (extraDigitSegments[i])
+                {
+                    digitalWrite(segmentPins[i], SON);
+                }
             }
-            digitalWrite(segmentPins[seg], SON);
+        }
+        else
+        {
+            for (const int8_t seg : numberPinMap[currentNum])
+            {
+                if (seg == NONE)
+                {
+                    continue;
+                }
+                digitalWrite(segmentPins[seg], SON);
+            }
+        }
+
+        for (signed char iconPin : iconPins)
+        {
+            digitalWrite(iconPin, SOFF);
+        }
+
+        bool *digitIcons = iconMap[currentDigit];
+        for (size_t i = 0; i < sizeof(iconPins); i++)
+        {
+            bool on = digitIcons[i];
+            digitalWrite(iconPins[i], on ? SON : SOFF);
         }
 
         digitalWrite(digitPins[currentDigit], DON);

@@ -24,7 +24,6 @@
 #define FAN_HIGH "ALTA"
 #define FAN_TURBO "TURBO"
 
-#define MIN_FAN_SPEED 1
 #define MIN_SETPOINT 16
 #define MAX_SETPOINT 30
 
@@ -178,13 +177,12 @@ void setup()
        mosquetteer.sendState(TARGET_TEMP_ID, prop.toString());
    });
 
-    numberConfig.unit.unit[0] = 0;
-    numberConfig.minMax.min = MIN_FAN_SPEED;
-    numberConfig.minMax.max = MAX_FAN_SPEED;
-    mosquetteer.define(FAN_SPEED_ID, "Fan Speed", MosquetteerShared::NUMBER, &numberConfig);
+    selectConfig.options = fanOptions;
+    selectConfig.optionsCount = fanOptionsSize;
+    mosquetteer.define(FAN_SPEED_ID, "Fan Speed", MosquetteerShared::SELECT, &selectConfig);
     mosquetteer.onCommand(FAN_SPEED_ID, [](const MosquetteerProp &prop)
    {
-       settings.setpoint = prop.toInt();
+       snprintf(settings.fanMode, sizeof(settings.fanMode), "%s", prop.toString());
        mosquetteer.sendState(FAN_SPEED_ID, prop.toString());
    });
 }

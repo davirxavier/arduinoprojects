@@ -6,19 +6,15 @@
 
 #define RELAY_PIN 2
 #define BUZZ_PIN 3
-#define BTN_TIME_PIN A6
-#define BTN_START_PIN A7
-#define TIMER_LED_PIN A1
-#define MODE_TIMER_PIN A2
-#define MODE_CHRONO_PIN A3
+#define BTN_PIN A3
 
 #define EEPROM_VER 1
 #define EEPROM_INDEXES 2
 
 OneButton timeButton = {};
 OneButton startButton = {};
-OneButton timerModeButton(MODE_TIMER_PIN);
-OneButton chronoModeButton(MODE_CHRONO_PIN);
+OneButton timerModeButton = {};
+OneButton chronoModeButton = {};
 
 DxBuzzer buzzer(BUZZ_PIN);
 
@@ -159,6 +155,14 @@ void onModeEvent(Mode mode)
     Serial.println(mode);
     currentMode = mode;
 
+    SevenDisplay::updateExtraDigit(5, currentMode != OFF);
+    SevenDisplay::updateExtraDigit(2, currentMode != OFF);
+
+    SevenDisplay::setIcon(1, 0, currentMode == MODE_TIMER); // timer
+    SevenDisplay::setIcon(1, 1, currentState == STANDBY); // def
+    SevenDisplay::setIcon(0, 1, currentMode == MODE_CHRONO); // clock
+    SevenDisplay::setIcon(3, 0, currentState > STANDBY); // cook
+
     if (currentMode == OFF && currentState > STANDBY)
     {
         changeState(STANDBY);
@@ -180,7 +184,6 @@ void onModeEvent(Mode mode)
     }
 
     SevenDisplay::on = true;
-    digitalWrite(TIMER_LED_PIN, currentMode == MODE_TIMER ? SevenDisplay::SON : SevenDisplay::SOFF);
     timerIncrement = currentMode != MODE_TIMER;
     needsDisplayUpdate = true;
 }
@@ -285,6 +288,49 @@ void onStartIdle()
     ignoreStartPress = false;
 }
 
+int readButtonBinaryState()
+{
+    static const int thresholds[] = {976, 887, 811, 741, 680, 636, 596, 545, 499, 474, 451, 429, 408, 391, 376};
+    int adcValue = analogRead(BTN_PIN);
+    int currentState = 15;
+    if (adcValue > thresholds[0])
+    {
+        currentState = 0;
+    }
+    else
+    {
+        for (int i = 0; i < 14; i++)
+        {
+            if (adcValue <= thresholds[i] && adcValue > thresholds[i + 1])
+            {
+                currentState = i + 1;
+                break;
+            }
+        }
+    }
+    return currentState;
+}
+
+bool isMode1Pressed(int binaryState)
+{
+    return bitRead(binaryState, 3);
+}
+
+bool isMode2Pressed(int binaryState)
+{
+    return bitRead(binaryState, 0);
+}
+
+bool isStartPressed(int binaryState)
+{
+    return bitRead(binaryState, 2);
+}
+
+bool isTimePressed(int binaryState)
+{
+    return bitRead(binaryState, 1);
+}
+
 void setupDisplay()
 {
     SevenDisplay::initDisplay();
@@ -356,9 +402,6 @@ void setup()
     chronoModeButton.attachLongPressStart([]() {onModeEvent(MODE_CHRONO);});
     chronoModeButton.attachLongPressStop([]() {onModeEvent(OFF);});
 
-    pinMode(TIMER_LED_PIN, OUTPUT);
-    digitalWrite(TIMER_LED_PIN, SevenDisplay::SOFF);
-
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
     pinMode(BUZZ_PIN, OUTPUT);
@@ -373,10 +416,11 @@ void setup()
 
 void loop()
 {
-    timeButton.tick(analogRead(BTN_TIME_PIN) > 512);
-    startButton.tick(analogRead(BTN_START_PIN) > 512);
-    timerModeButton.tick();
-    chronoModeButton.tick();
+    int binaryState = readButtonBinaryState();
+    timeButton.tick(isTimePressed(binaryState));
+    startButton.tick(isStartPressed(binaryState));
+    timerModeButton.tick(isMode1Pressed(binaryState));
+    chronoModeButton.tick(isMode2Pressed(binaryState));
     buzzer.update();
 
     if (needsDisplayUpdate)

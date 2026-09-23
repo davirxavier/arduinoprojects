@@ -21,6 +21,8 @@
 #define INA_SHUNT_RESISTANCE 0.0015
 #define INA_SHUNT_MAX_CURRENT 50
 #define INA_READ_INTERVAL 10
+#define INA_LOAD_CURRENT_LIMIT_MA 22000
+#define INA_LOAD_INCREASE_INTERVAL 200
 
 #define IR_PIN 11
 #define BUTTON_PIN A0
@@ -35,6 +37,9 @@
 #define INDUCT_SIGNAL_PIN 4
 #define INDUCT_PULSE_PIN 5
 #define INDUCT_CAPACITANCE_F 1.E-6 // 1uF
+
+#define LOAD_PWM_PIN 9
+#define LOAD_FAN_PIN 13
 
 /*
  * 69 - power
@@ -120,6 +125,7 @@ namespace Mode
     {
         DC,
         AC,
+        LOAD,
         INDUCTANCE,
         CAPACITANCE,
         BOOST,
@@ -182,6 +188,9 @@ double currentSubValue = 0;
 double currentOutputVoltage = 0;
 bool fastCharge = false;
 bool modeChanging = false;
+double loadTargetCurrent = 0;
+bool isVariableLoadEnabled = false;
+uint8_t currentLoadDutyCycle = 0;
 
 void saveState()
 {
@@ -341,6 +350,34 @@ inline void updateDisplay()
             }
             break;
         }
+    case Mode::LOAD:
+        {
+            UnitValues val1{
+                .value = currentValue,
+                .units = {"mA", "A"},
+                .unitsSize = 2,
+                .thresholds = {1, 950},
+                .divisionFactors = {1, 1000}
+            };
+
+            UnitValues val2{
+                .value = loadTargetCurrent,
+                .units = {"mA(tg)", "A(tg)"},
+                .unitsSize = 2,
+                .thresholds = {1, 950},
+                .divisionFactors = {1, 1000}
+            };
+
+            if (isVariableLoadEnabled)
+            {
+                printVal("LOAD", &val1, &val2);
+            }
+            else
+            {
+                printVal("LOAD (off)", &val2);
+            }
+            break;
+        }
     case Mode::INDUCTANCE:
         {
             UnitValues val1{
@@ -431,6 +468,12 @@ inline void updateDisplay()
 
 void parseValuesIna()
 {
+    if (currentState.mode == Mode::LOAD)
+    {
+        currentValue = abs(ina.getCurrent_mA());
+        return;
+    }
+
     switch (currentState.modeParam)
     {
     case Mode::VOLTAGE_MAX:
@@ -489,6 +532,23 @@ void parseValuesIna()
             }
             break;
         }
+    }
+}
+
+void updateVariableLoad()
+{
+    if (!isVariableLoadEnabled)
+    {
+        analogWrite(LOAD_PWM_PIN, 0);
+        digitalWrite(LOAD_FAN_PIN, LOW);
+        currentLoadDutyCycle = 0;
+        return;
+    }
+
+    if (currentValue < loadTargetCurrent)
+    {
+        currentLoadDutyCycle = currentLoadDutyCycle == 254 ? 254 : currentLoadDutyCycle+1;
+        analogWrite(LOAD_PWM_PIN, currentLoadDutyCycle);
     }
 }
 
@@ -552,6 +612,11 @@ void changeSubmode()
         fastCharge = !fastCharge;
         resetVals();
     }
+    else if (currentState.mode == Mode::LOAD)
+    {
+        isVariableLoadEnabled = !isVariableLoadEnabled;
+        updateVariableLoad();
+    }
 }
 
 void changeAcc()
@@ -605,6 +670,29 @@ void parseControls()
         hasSaveState = true;
         saveStateTimer = millis();
     }
+    else if ((command == CMD_LESS || command == CMD_LESS_LESS) && currentState.mode == Mode::LOAD)
+    {
+        loadTargetCurrent -= command == CMD_LESS_LESS ? 1.0 : 0.1;
+        if (loadTargetCurrent <= 0.1)
+        {
+            loadTargetCurrent = 0.1;
+        }
+
+        updateDisplay();
+        hasSaveState = true;
+        saveStateTimer = millis();
+    }
+    else if ((command == CMD_MORE || command == CMD_MORE_MORE) && currentState.mode == Mode::LOAD)
+    {
+        loadTargetCurrent += command == CMD_MORE_MORE ? 1.0 : 0.1;
+        if (loadTargetCurrent > 20)
+        {
+            loadTargetCurrent = 20;
+        }
+
+        hasSaveState = true;
+        saveStateTimer = millis();
+    }
     else if (command == CMD_CHANGE_SUBMODE)
     {
         changeSubmode();
@@ -632,6 +720,10 @@ void setup()
 #endif
 
     // Wire.setClock(400000L);
+
+    analogWrite(LOAD_PWM_PIN, 0);
+    pinMode(LOAD_FAN_PIN, OUTPUT);
+    digitalWrite(LOAD_FAN_PIN, LOW);
 
     EEPROMwl.begin(EEPROM_VER, EEPROM_INDEXES);
     recoverState();
@@ -670,6 +762,8 @@ void setup()
     {
         inaError = -1;
         ina.setResistorRange(INA_SHUNT_RESISTANCE, INA_SHUNT_MAX_CURRENT);
+        ina.setAlertType(CURRENT_OVER, INA_LOAD_CURRENT_LIMIT_MA);
+        ina.enableAlertLatch();
         ina.waitUntilConversionCompleted();
     }
     else
@@ -716,6 +810,21 @@ void loop()
         millis() - lastMeasurement > INA_READ_INTERVAL)
     {
         parseValuesIna();
+        lastMeasurement = millis();
+    }
+
+    if (Mode::LOAD == currentState.mode &&
+        inaError < 0 &&
+        millis() - lastMeasurement > INA_LOAD_INCREASE_INTERVAL)
+    {
+        parseValuesIna();
+        if (currentValue < loadTargetCurrent)
+        {
+
+        }
+
+        // TODO
+
         lastMeasurement = millis();
     }
 

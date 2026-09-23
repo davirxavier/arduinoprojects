@@ -1,14 +1,14 @@
 #include <Arduino.h>
 
-// #define ESP_CONFIG_PAGE_ENABLE_LOGGING
+#define ESP_CONFIG_PAGE_ENABLE_LOGGING
 // #define ESP32_CONFIG_PAGE_USE_ESP_IDF_OTA
 #include <esp-config-page.h>
 #include <WebSocketsClient.h>
 #include <secrets.h>
 
-// #define TELEGRAM_ENABLE_LOGGING
-// #define TELEGRAM_LOG_DEBUG
+#define TELEGRAM_ENABLE_LOGGING
 #include <esp_http_client.h>
+#include <telegram-requests-httpx.h>
 #include <telegram-requests-arduino.h>
 
 #define BUTTON_PIN 3
@@ -151,18 +151,6 @@ void setup() {
     ESP_CONFIG_PAGE::addEnvVar(bellIpVar);
     ESP_CONFIG_PAGE::addEnvVar(cameraUrlVar);
     ESP_CONFIG_PAGE::setAndUpdateEnvVarStorage(new ESP_CONFIG_PAGE::LittleFSKeyValueStorage("/envfinal.txt"));
-
-    ESP_CONFIG_PAGE::addCustomAction("TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
-    {
-        server.send(200);
-        shouldRing = true;
-    });
-
-    ESP_CONFIG_PAGE::addCustomAction("ESP-IDF TEST", [](ESP_CONFIG_PAGE::WEBSERVER_T &server)
-    {
-        server.send(200);
-        sendCamPhoto();
-    });
 
     ESP_CONFIG_PAGE::initModules(&httpServer, usernameVar->value, passwordVar->value, "ESP32-BELLBTN2");
     httpServer.begin();
