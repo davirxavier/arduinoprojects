@@ -1,0 +1,13 @@
+{
+  "name": "1-wire-comm",
+  "version": "1.0.0",
+  "keywords": "wifi,wi-fi,esp,esp8266,esp32,espressif8266,espressif32,nodemcu,wemos,arduino",
+  "description": "",
+  "frameworks": ["arduino", "espidf"],
+  "platforms":
+  [
+    "espressif8266",
+    "espressif32",
+    "arduino"
+  ]
+}
