@@ -1,0 +1,17 @@
+# Build artifacts
+build/
+sdkconfig.old
+*.elf
+*.bin
+*.map
+
+# ESP-IDF managed components
+managed_components/
+
+# IDE files
+.idea/
+*.iml
+
+# System files
+.DS_Store
+Thumbs.db
