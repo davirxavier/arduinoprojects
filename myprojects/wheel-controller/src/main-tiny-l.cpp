@@ -7,17 +7,17 @@ volatile uint16_t overflowCount = 0;
 
 ISR(TIM0_OVF_vect)
 {
-    if (++overflowCount >= 480)
+    if (++overflowCount >= 240) // every ~17ms
     {
         overflowCount = 0;
         timerCounter++;
     }
 }
 
-constexpr byte X_OUT_PIN = PB1;
+constexpr byte X_OUT_PIN = PB0;
 constexpr analog_pin_t X_IN_PIN = A3;
 
-constexpr byte MODE_BUTTON_PIN = PB0;
+constexpr byte MODE_BUTTON_PIN = PB1;
 constexpr byte MODE_IN_PIN = PB2;
 constexpr byte MODE_OUT_PIN = PB4;
 constexpr byte LED_PIN = PB5;
@@ -32,7 +32,7 @@ enum State
 State currentState = NO_ANALOG;
 bool hasSignal = false;
 
-constexpr byte DEBOUNCE_TICKS = 7; // about 25.6 ms
+constexpr byte DEBOUNCE_TICKS = 5; // about 85ms
 
 bool rawButtonState = false;
 bool stableButtonState = false;
@@ -63,15 +63,15 @@ void writeLedUpdate(State newState)
 {
     if (newState == ANALOG_SENSITIVE && currentState == ANALOG)
     {
-        digitalWrite(LED_PIN, LOW);
+        digitalWrite(LED_PIN, HIGH);
     }
     else if (newState >= ANALOG && currentState == NO_ANALOG)
     {
-        digitalWrite(LED_PIN, HIGH);
+        digitalWrite(LED_PIN, LOW);
     }
     else if (newState == NO_ANALOG && currentState >= ANALOG)
     {
-        digitalWrite(LED_PIN, LOW);
+        digitalWrite(LED_PIN, HIGH);
     }
 }
 
@@ -160,24 +160,24 @@ void setup()
 {
     pinMode(MODE_OUT_PIN, OUTPUT);
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);
+    digitalWrite(LED_PIN, HIGH);
     digitalWrite(MODE_OUT_PIN, LOW);
 
     pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
     pinMode(MODE_IN_PIN, INPUT);
-    pinMode(X_OUT_PIN, OUTPUT);
 
-    // Timer0: Fast PWM on OC0B (PB1), 37.5 kHz at 9.6 MHz
-    TCCR0A = (1 << COM0B1) | (1 << WGM01) | (1 << WGM00);
+    pinMode(X_OUT_PIN, OUTPUT);
+    // Timer0: Fast PWM on OC0B (PB1), 18.75 kHz at 4.8 MHz
+    TCCR0A = (1 << COM0A1) | (1 << WGM01) | (1 << WGM00);
     TCCR0B = (1 << CS00);
     TIMSK0 = (1 << TOIE0);
-    OCR0B = 127;  // Start at approximately 50% duty cycle
+    OCR0A = 127;  // Start at approximately 50% duty cycle
     sei();
 }
 
 void loop()
 {
-    writeStick(analogRead(X_IN_PIN), currentState == ANALOG_SENSITIVE);
+    // writeStick(analogRead(X_IN_PIN), currentState == ANALOG_SENSITIVE);
 
     bool buttonPressedEdge = readButtonPressedEdge();
     bool newSignalState = digitalRead(MODE_IN_PIN);
@@ -190,7 +190,7 @@ void loop()
         if (count % 64 == 0)
         {
             bool ledState = (count / 64) % 2 == 0;
-            digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+            digitalWrite(LED_PIN, ledState ? LOW : HIGH);
         }
     }
 }
