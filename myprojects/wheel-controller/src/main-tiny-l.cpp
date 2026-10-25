@@ -7,7 +7,8 @@ volatile uint16_t overflowCount = 0;
 
 ISR(TIM0_OVF_vect)
 {
-    if (++overflowCount >= 240) // every ~17ms
+    constexpr uint16_t threshold = F_CPU / 25600UL; // Every ~10ms
+    if (++overflowCount >= threshold)
     {
         overflowCount = 0;
         timerCounter++;
@@ -32,7 +33,7 @@ enum State
 State currentState = NO_ANALOG;
 bool hasSignal = false;
 
-constexpr byte DEBOUNCE_TICKS = 5; // about 85ms
+constexpr byte DEBOUNCE_TICKS = 5;
 
 bool rawButtonState = false;
 bool stableButtonState = false;
@@ -153,7 +154,7 @@ void writeStick(const uint16_t rawInput, const bool sensitive = false)
         }
     }
 
-    OCR0B = rawOutput;
+    OCR0A = rawOutput;
 }
 
 void setup()
@@ -167,7 +168,7 @@ void setup()
     pinMode(MODE_IN_PIN, INPUT);
 
     pinMode(X_OUT_PIN, OUTPUT);
-    // Timer0: Fast PWM on OC0B (PB1), 18.75 kHz at 4.8 MHz
+    // Timer0: Fast PWM on OC0A (PB0), 18.75 kHz at 4.8 MHz
     TCCR0A = (1 << COM0A1) | (1 << WGM01) | (1 << WGM00);
     TCCR0B = (1 << CS00);
     TIMSK0 = (1 << TOIE0);
@@ -177,10 +178,10 @@ void setup()
 
 void loop()
 {
-    // writeStick(analogRead(X_IN_PIN), currentState == ANALOG_SENSITIVE);
+    writeStick(analogRead(X_IN_PIN), currentState == ANALOG_SENSITIVE);
 
     bool buttonPressedEdge = readButtonPressedEdge();
-    bool newSignalState = digitalRead(MODE_IN_PIN);
+    bool newSignalState = digitalRead(MODE_IN_PIN) == LOW;
     updateBtn(newSignalState, buttonPressedEdge);
 
     if (currentState == ANALOG_SENSITIVE)

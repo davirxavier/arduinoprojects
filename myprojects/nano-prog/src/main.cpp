@@ -1,7 +1,9 @@
 #ifndef ARDUINO_AVR_ATTINY13
 
 #define READY_LED A4
-#define SERIAL_LED 6
+#define MODE_LED 6
+#define MODE_LED_ON analogWrite(MODE_LED, 50)
+#define MODE_LED_OFF analogWrite(MODE_LED, 0)
 
 #include <Arduino.h>
 #include <stk500.h>
@@ -15,17 +17,12 @@ void setup()
     pinMode(READY_LED, OUTPUT);
     digitalWrite(READY_LED, HIGH);
 
-    pinMode(SERIAL_LED, OUTPUT);
-    digitalWrite(SERIAL_LED, LOW);
+    pinMode(MODE_LED, OUTPUT);
+    MODE_LED_OFF;
 }
 
 void loop()
 {
-    if (Serial.available())
-    {
-        digitalWrite(SERIAL_LED, HIGH);
-        PROGRAMMER::loop();
-        digitalWrite(SERIAL_LED, LOW);
-    }
+    PROGRAMMER::loop();
 }
 #endif

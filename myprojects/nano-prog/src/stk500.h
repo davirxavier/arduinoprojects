@@ -45,62 +45,69 @@ Use AVRdude with -carduino switch
 #define SOFTWAREVERSION_MINOR 1
 #endif
 
+#include <SoftwareSerial.h>
+
 namespace PROGRAMMER
 {
     // responses
-    constexpr uint8_t Resp_STK_OK       = 0x10;
-    constexpr uint8_t Resp_STK_FAILED   = 0x11;
-    constexpr uint8_t Resp_STK_UNKNOWN  = 0x12;
+    constexpr uint8_t Resp_STK_OK = 0x10;
+    constexpr uint8_t Resp_STK_FAILED = 0x11;
+    constexpr uint8_t Resp_STK_UNKNOWN = 0x12;
     constexpr uint8_t Resp_STK_NODEVICE = 0x13;
-    constexpr uint8_t Resp_STK_INSYNC   = 0x14;
-    constexpr uint8_t Resp_STK_NOSYNC   = 0x15;
+    constexpr uint8_t Resp_STK_INSYNC = 0x14;
+    constexpr uint8_t Resp_STK_NOSYNC = 0x15;
 
     // special
-    constexpr uint8_t Sync_STK_CRC_EOP  = 0x20;
+    constexpr uint8_t Sync_STK_CRC_EOP = 0x20;
 
     // commands
-    constexpr uint8_t Cmnd_STK_GET_SYNC         = 0x30;
-    constexpr uint8_t Cmnd_STK_GET_SIGN_ON      = 0x31;
-    constexpr uint8_t Cmnd_STK_RESET            = 0x32;
-    constexpr uint8_t Cmnd_STK_SINGLE_CLOCK     = 0x33;
+    constexpr uint8_t Cmnd_STK_GET_SYNC = 0x30;
+    constexpr uint8_t Cmnd_STK_GET_SIGN_ON = 0x31;
+    constexpr uint8_t Cmnd_STK_RESET = 0x32;
+    constexpr uint8_t Cmnd_STK_SINGLE_CLOCK = 0x33;
     constexpr uint8_t Cmnd_STK_STORE_PARAMETERS = 0x34;
 
-    constexpr uint8_t Cmnd_STK_SET_PARAMETER    = 0x40;
-    constexpr uint8_t Cmnd_STK_GET_PARAMETER    = 0x41;
-    constexpr uint8_t Cmnd_STK_SET_DEVICE       = 0x42;
-    constexpr uint8_t Cmnd_STK_GET_DEVICE       = 0x43;
-    constexpr uint8_t Cmnd_STK_GET_STATUS       = 0x44;
-    constexpr uint8_t Cmnd_STK_SET_DEVICE_EXT   = 0x45;
+    constexpr uint8_t Cmnd_STK_SET_PARAMETER = 0x40;
+    constexpr uint8_t Cmnd_STK_GET_PARAMETER = 0x41;
+    constexpr uint8_t Cmnd_STK_SET_DEVICE = 0x42;
+    constexpr uint8_t Cmnd_STK_GET_DEVICE = 0x43;
+    constexpr uint8_t Cmnd_STK_GET_STATUS = 0x44;
+    constexpr uint8_t Cmnd_STK_SET_DEVICE_EXT = 0x45;
 
-    constexpr uint8_t Cmnd_STK_ENTER_PROGMODE   = 0x50;
-    constexpr uint8_t Cmnd_STK_LEAVE_PROGMODE   = 0x51;
-    constexpr uint8_t Cmnd_STK_CHIP_ERASE       = 0x52;
-    constexpr uint8_t Cmnd_STK_CHECK_AUTOINC    = 0x53;
-    constexpr uint8_t Cmnd_STK_CHECK_DEVICE     = 0x54;
-    constexpr uint8_t Cmnd_STK_LOAD_ADDRESS     = 0x55;
-    constexpr uint8_t Cmnd_STK_UNIVERSAL        = 0x56;
+    constexpr uint8_t Cmnd_STK_ENTER_PROGMODE = 0x50;
+    constexpr uint8_t Cmnd_STK_LEAVE_PROGMODE = 0x51;
+    constexpr uint8_t Cmnd_STK_CHIP_ERASE = 0x52;
+    constexpr uint8_t Cmnd_STK_CHECK_AUTOINC = 0x53;
+    constexpr uint8_t Cmnd_STK_CHECK_DEVICE = 0x54;
+    constexpr uint8_t Cmnd_STK_LOAD_ADDRESS = 0x55;
+    constexpr uint8_t Cmnd_STK_UNIVERSAL = 0x56;
 
-    constexpr uint8_t Cmnd_STK_PROG_FLASH       = 0x60;
-    constexpr uint8_t Cmnd_STK_PROG_DATA        = 0x61;
-    constexpr uint8_t Cmnd_STK_PROG_FUSE        = 0x62;
-    constexpr uint8_t Cmnd_STK_PROG_LOCK        = 0x63;
-    constexpr uint8_t Cmnd_STK_PROG_PAGE        = 0x64;
-    constexpr uint8_t Cmnd_STK_PROG_FUSE_EXT    = 0x65;
+    constexpr uint8_t Cmnd_STK_PROG_FLASH = 0x60;
+    constexpr uint8_t Cmnd_STK_PROG_DATA = 0x61;
+    constexpr uint8_t Cmnd_STK_PROG_FUSE = 0x62;
+    constexpr uint8_t Cmnd_STK_PROG_LOCK = 0x63;
+    constexpr uint8_t Cmnd_STK_PROG_PAGE = 0x64;
+    constexpr uint8_t Cmnd_STK_PROG_FUSE_EXT = 0x65;
 
-    constexpr uint8_t Cmnd_STK_READ_FLASH       = 0x70;
-    constexpr uint8_t Cmnd_STK_READ_DATA        = 0x71;
-    constexpr uint8_t Cmnd_STK_READ_FUSE        = 0x72;
-    constexpr uint8_t Cmnd_STK_READ_LOCK        = 0x73;
-    constexpr uint8_t Cmnd_STK_READ_PAGE        = 0x74;
-    constexpr uint8_t Cmnd_STK_READ_SIGN        = 0x75;
-    constexpr uint8_t Cmnd_STK_READ_OSCCAL      = 0x76;
-    constexpr uint8_t Cmnd_STK_READ_FUSE_EXT    = 0x77;
-    constexpr uint8_t Cmnd_STK_READ_OSCCAL_EXT  = 0x78;
+    constexpr uint8_t Cmnd_STK_READ_FLASH = 0x70;
+    constexpr uint8_t Cmnd_STK_READ_DATA = 0x71;
+    constexpr uint8_t Cmnd_STK_READ_FUSE = 0x72;
+    constexpr uint8_t Cmnd_STK_READ_LOCK = 0x73;
+    constexpr uint8_t Cmnd_STK_READ_PAGE = 0x74;
+    constexpr uint8_t Cmnd_STK_READ_SIGN = 0x75;
+    constexpr uint8_t Cmnd_STK_READ_OSCCAL = 0x76;
+    constexpr uint8_t Cmnd_STK_READ_FUSE_EXT = 0x77;
+    constexpr uint8_t Cmnd_STK_READ_OSCCAL_EXT = 0x78;
+
+    constexpr uint8_t Cmnd_CUSTOM_SERIAL_MODE = 0x90;
+    constexpr uint8_t Cmnd_CUSTOM_SEND_SERIAL = 0x91;
+    bool serialMode = false;
+    SoftwareSerial *targetSerial = nullptr;
 
     // parameters
-    constexpr uint8_t Parm_STK_HW_VER           = 0x80;
-    constexpr uint8_t Parm_STK_SW_MAJOR         = 0x81;
-    constexpr uint8_t Parm_STK_SW_MINOR         = 0x82;
+    constexpr uint8_t Parm_STK_HW_VER = 0x80;
+    constexpr uint8_t Parm_STK_SW_MAJOR = 0x81;
+    constexpr uint8_t Parm_STK_SW_MINOR = 0x82;
 
     // parameter structure
     struct Params
@@ -117,18 +124,18 @@ namespace PROGRAMMER
         uint8_t flashpollval2;
         uint8_t eeprompollval1;
         uint8_t eeprompollval2;
-        uint8_t pagesizehigh;     // 16-bit big endian flashmemory programming pagesize in bytes
+        uint8_t pagesizehigh; // 16-bit big endian flashmemory programming pagesize in bytes
         uint8_t pagesizelow;
-        uint8_t eepromsizehigh;   // 16-bit big endian eeprom size in bytes
+        uint8_t eepromsizehigh; // 16-bit big endian eeprom size in bytes
         uint8_t eepromsizelow;
-        uint8_t flashsize4;       // 32-bit big endian flash size in bytes
+        uint8_t flashsize4; // 32-bit big endian flash size in bytes
         uint8_t flashsize3;
         uint8_t flashsize2;
         uint8_t flashsize1;
     };
 
-    Params    params;
-    uint8_t   eepromPageSize;
+    Params params;
+    uint8_t eepromPageSize;
 
     // low level serial functions
 
@@ -180,7 +187,7 @@ namespace PROGRAMMER
     void getParameter()
     {
         uint8_t b = readByte();
-        if      (b == Parm_STK_HW_VER)   b = HARDWAREVERSION;
+        if (b == Parm_STK_HW_VER) b = HARDWAREVERSION;
         else if (b == Parm_STK_SW_MAJOR) b = SOFTWAREVERSION_MAJOR;
         else if (b == Parm_STK_SW_MINOR) b = SOFTWAREVERSION_MINOR;
         else b = 0;
@@ -194,15 +201,16 @@ namespace PROGRAMMER
 
     void setDeviceParams()
     {
-        for(uint8_t i = 0; i < sizeof(params); i++)
+        for (uint8_t i = 0; i < sizeof(params); i++)
             *(uint8_t*)(&params + i) = readByte();
         endOfCommand();
     }
+
     void setDeviceExtParams()
     {
         uint8_t len = readByte();
         eepromPageSize = readByte(); // only required ext device param
-        for(uint8_t i = 2; i < len; i++) readByte(); // ignore all others
+        for (uint8_t i = 2; i < len; i++) readByte(); // ignore all others
         endOfCommand();
     }
 
@@ -213,42 +221,42 @@ namespace PROGRAMMER
     {
         uint16_t cmd = (readByte() << 8) | readByte();
         uint8_t idx = readByte();
-        uint8_t data =readByte();
+        uint8_t data = readByte();
         if (endOfPacket())
         {
             writeInSync();
             switch (cmd)
             {
-                case 0x3000:                      // prefered by stk500v1 programmer
-                    data = HVSP::readSignatureByte(idx);
-                    break;
-                case 0x5000:
-                    data = HVSP::readLowFuse();
-                    break;
-                case 0x5008:
-                    data = HVSP::readExtFuse();
-                    break;
-                case 0x5800:
-                    data = HVSP::readLockBits();
-                    break;
-                case 0x5808:
-                    data = HVSP::readHighFuse();
-                    break;
-                case 0xAC80:
-                    HVSP::chipErase();
-                    break;
-                case 0xACA0:
-                    HVSP::writeLowFuse(data);
-                    break;
-                case 0xACA4:
-                    HVSP::writeExtFuse(data);
-                    break;
-                case 0xACA8:
-                    HVSP::writeHighFuse(data);
-                    break;
-                case 0xACE0:
-                    HVSP::writeLockBits(data);
-                    break;
+            case 0x3000: // prefered by stk500v1 programmer
+                data = HVSP::readSignatureByte(idx);
+                break;
+            case 0x5000:
+                data = HVSP::readLowFuse();
+                break;
+            case 0x5008:
+                data = HVSP::readExtFuse();
+                break;
+            case 0x5800:
+                data = HVSP::readLockBits();
+                break;
+            case 0x5808:
+                data = HVSP::readHighFuse();
+                break;
+            case 0xAC80:
+                HVSP::chipErase();
+                break;
+            case 0xACA0:
+                HVSP::writeLowFuse(data);
+                break;
+            case 0xACA4:
+                HVSP::writeExtFuse(data);
+                break;
+            case 0xACA8:
+                HVSP::writeHighFuse(data);
+                break;
+            case 0xACE0:
+                HVSP::writeLockBits(data);
+                break;
             }
             writeByte(data);
             writeOK();
@@ -326,64 +334,191 @@ namespace PROGRAMMER
         endOfCommand();
     }
 
+    void serialModeToggle()
+    {
+        uint32_t baud = ((uint32_t)readByte() << 24);
+        baud |= ((uint32_t)readByte() << 16);
+        baud |= ((uint32_t)readByte() << 8);
+        baud |= readByte();
+
+        if (!endOfPacket()) return;
+
+        if (!HVSP::progMode && (baud == 0 || baud <= 115200))
+        {
+            serialMode = baud != 0;
+
+            if (serialMode)
+            {
+                HVSP::HVSP_disable();
+                HVSP::vccUp();
+                targetSerial = new SoftwareSerial(HVSP_SDI, HVSP_SII);
+                targetSerial->begin(baud);
+                MODE_LED_ON;
+            }
+            else
+            {
+                targetSerial->end();
+                delete targetSerial;
+                targetSerial = nullptr;
+                pinMode(HVSP_SDI, INPUT);
+                pinMode(HVSP_SII, INPUT);
+                HVSP::HVSP_disable();
+                MODE_LED_OFF;
+            }
+
+            writeInSync();
+            writeOK();
+        }
+        else
+        {
+            writeInSync();
+            writeByte(Resp_STK_FAILED);
+        }
+    }
+
+    void forwardTargetData()
+    {
+        if (targetSerial == nullptr)
+        {
+            return;
+        }
+
+        while (targetSerial->available() > 0)
+        {
+            Serial.write(targetSerial->read());
+        }
+    }
+
+    void customSend()
+    {
+        if (targetSerial == nullptr)
+        {
+            return;
+        }
+
+        uint16_t len = ((uint16_t)readByte() << 8) | readByte();
+
+        // Adjust this limit to fit your Nano's available memory.
+        if (len > 128)
+        {
+            // Consume the payload so the next command stays aligned.
+            while (len--) readByte();
+
+            if (!endOfPacket()) return;
+
+            writeInSync();
+            writeByte(Resp_STK_FAILED);
+            return;
+        }
+
+        uint8_t data[128];
+
+        for (uint16_t i = 0; i < len; i++)
+            data[i] = readByte();
+
+        if (!endOfPacket()) return;
+
+        for (uint16_t i = 0; i < len; i++)
+            targetSerial->write(data[i]);
+
+        // writeInSync();
+        // writeOK();
+    }
+
     void loop()
     {
-        switch(readByte())
+        if (serialMode)
         {
-            case Cmnd_STK_GET_SYNC:
-                endOfCommand();
-                break;
+            forwardTargetData();
 
-            case Cmnd_STK_GET_PARAMETER:
-                getParameter();
-                break;
+            if (Serial.available() == 0)
+                return;
 
-            case Cmnd_STK_SET_DEVICE:
-                setDeviceParams();
-                break;
+            uint8_t command = Serial.read();
 
-            case Cmnd_STK_SET_DEVICE_EXT:
-                setDeviceExtParams();
-                break;
+            if (command == Cmnd_CUSTOM_SERIAL_MODE)
+            {
+                serialModeToggle();
+            }
+            else if (command == Cmnd_CUSTOM_SEND_SERIAL)
+            {
+                customSend();
+            }
 
-            case Cmnd_STK_ENTER_PROGMODE:
-                HVSP::HVSP_enable();
-                endOfCommand();
-                break;
+            return;
+        }
 
-            case Cmnd_STK_LEAVE_PROGMODE:
-                HVSP::HVSP_disable();
-                endOfCommand();
-                break;
+        if (Serial.available() == 0)
+        {
+            return;
+        }
 
-            case Cmnd_STK_READ_SIGN: // prefered by arduino programmer
-                if (endOfPacket())
-                {
-                    writeInSync();
-                    for(uint8_t i = 0; i <3; i++) writeByte(HVSP::readSignatureByte(i));
-                    writeOK();
-                }
-                break;
+        const byte cmd = readByte();
+        if (!HVSP::progMode && cmd == Cmnd_CUSTOM_SERIAL_MODE)
+        {
+            serialModeToggle();
+            return;
+        }
 
-            case Cmnd_STK_UNIVERSAL:
-                universalCommand();
-                break;
+        switch (cmd)
+        {
+        case Cmnd_STK_GET_SYNC:
+            endOfCommand();
+            break;
 
-            case Cmnd_STK_LOAD_ADDRESS:  // set flash/eeprom word address
-                HVSP::currAddr = readByte() | (readByte() << 8);
-                endOfCommand();
-                break;
+        case Cmnd_STK_GET_PARAMETER:
+            getParameter();
+            break;
 
-            case Cmnd_STK_READ_PAGE:
-                readPage();
-                break;
+        case Cmnd_STK_SET_DEVICE:
+            setDeviceParams();
+            break;
 
-            case Cmnd_STK_PROG_PAGE:
-                writePage();
-                break;
+        case Cmnd_STK_SET_DEVICE_EXT:
+            setDeviceExtParams();
+            break;
 
-            default:
-                if(endOfPacket()) writeByte(Resp_STK_UNKNOWN);
+        case Cmnd_STK_ENTER_PROGMODE:
+            HVSP::HVSP_enable();
+            endOfCommand();
+            break;
+
+        case Cmnd_STK_LEAVE_PROGMODE:
+            HVSP::HVSP_disable();
+            endOfCommand();
+            break;
+
+        case Cmnd_STK_READ_SIGN:
+            if (endOfPacket())
+            {
+                writeInSync();
+                for (uint8_t i = 0; i < 3; i++)
+                    writeByte(HVSP::readSignatureByte(i));
+                writeOK();
+            }
+            break;
+
+        case Cmnd_STK_UNIVERSAL:
+            universalCommand();
+            break;
+
+        case Cmnd_STK_LOAD_ADDRESS:
+            HVSP::currAddr = readByte() | (readByte() << 8);
+            endOfCommand();
+            break;
+
+        case Cmnd_STK_READ_PAGE:
+            readPage();
+            break;
+
+        case Cmnd_STK_PROG_PAGE:
+            writePage();
+            break;
+
+        default:
+            if (endOfPacket())
+                writeByte(Resp_STK_UNKNOWN);
+            break;
         }
     }
 }
