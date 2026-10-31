@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <secrets.h>
+#include <Adafruit_VEML7700.h>
 
 #define ENABLE_LOGGING
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
@@ -23,14 +24,15 @@
 #include <esp-config-page.h>
 #include <ESP32Servo.h>
 
-#define ACTION_PIN 16
-#define PAN_PIN 12
-#define TILT_PIN 13
+#define ACTION_PIN 1
+#define PAN_PIN 19
+#define TILT_PIN 20
 
 #define ENABLED_ID "enabled"
 #define ACTION_TEST_ID "action_test"
 #define IMAGE_ID "picture"
 #define EVENT_ID "events"
+#define LUX_ID "lux-sense"
 #define INFERENCE_ID "inference-model"
 
 const char *events[] = {
@@ -45,15 +47,23 @@ bool mqttBegun = false;
 bool mqttStarted = false;
 
 bool nextPic = true;
-unsigned long pictureDelay = 1500;
+unsigned long pictureDelay = 200;
 unsigned long lastPicture = pictureDelay;
 
 bool hasAction = false;
 unsigned long actionTimer = 0;
 bool finishAction = false;
 
+float smoothedCatConfidence = 0.0f;
+float smoothedHumanConfidence = 0.0f;
+const float SMOOTHING_FACTOR = 0.5f;
+
 Servo tiltServo;
 Servo panServo;
+
+Adafruit_VEML7700 veml = Adafruit_VEML7700();
+bool luxInit = false;
+unsigned long lastLuxReading = 0;
 
 int getCenter(int v1, int v2)
 {
@@ -102,6 +112,9 @@ void setup()
     delay(5000); // TODO Remove
 #endif
 
+    Wire.begin(47, 21);
+    luxInit = veml.begin(&Wire);
+
     // MLOGN("Init camera");
     CamConfig::initCamera();
 
@@ -134,6 +147,10 @@ void setup()
     eventConfig.eventTypes = events;
     eventConfig.eventTypeCount = eventCount;
     mqtt.define(EVENT_ID, "Events", MosquetteerShared::EVENT, &eventConfig);
+
+    MosquetteerShared::SensorConfig luxConfig{};
+    luxConfig.unit.setUnit("lx");
+    mqtt.define(LUX_ID, "Luminosity", MosquetteerShared::SENSOR, &luxConfig);
 
     static constexpr char customSendTopic[] = "model-requests/image/couch-detector/1";
     static constexpr char customReceiveTopic[] = "model-responses/image/couch-detector/1";
@@ -169,29 +186,33 @@ void setup()
             return;
         }
 
-        bool hasCat = false;
-        bool hasHuman = false;
-
         int x1 = -1;
         int x2 = -1;
         int y1 = -1;
         int y2 = -1;
 
-        JsonArray detections = doc["detections"].as<JsonArray>();
+        float catConfidence = 0.0f;
+        float humanConfidence = 0.0f;
+
+        auto detections = doc["detections"].as<JsonArray>();
         for (JsonVariant d : detections)
         {
             int classId = d["class_id"];
-            double confidence = d["confidence"];
+            float confidence = d["confidence"];
+
             int localX1 = d["x1"];
             int localX2 = d["x2"];
             int localY1 = d["y1"];
             int localY2 = d["y2"];
 
-            MLOGF("Detection for class %d with confidence %f, x/y: %d/%d\n", classId, confidence, getCenter(localX1, localX2), getCenter(localY1, localY2));
+            MLOGF("Detection for class %d with confidence %f, x/y: %d/%d\n",
+                  classId, confidence,
+                  getCenter(localX1, localX2),
+                  getCenter(localY1, localY2));
 
             if (isCat(classId, confidence))
             {
-                hasCat = true;
+                catConfidence = max(catConfidence, confidence);
 
                 if (x1 == -1)
                 {
@@ -203,22 +224,31 @@ void setup()
             }
             else if (isHuman(classId, confidence))
             {
-                hasHuman = true;
+                humanConfidence = max(humanConfidence, confidence);
             }
         }
 
-        if (hasCat && !hasHuman && !hasAction && millis() - actionTimer > 1000)
+        smoothedCatConfidence = SMOOTHING_FACTOR * catConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedCatConfidence;
+        smoothedHumanConfidence = SMOOTHING_FACTOR * humanConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedHumanConfidence;
+        float shouldActivateConfidence = smoothedCatConfidence * (1.0f - smoothedHumanConfidence);
+        constexpr float ACTIVATION_THRESHOLD = 0.6f;
+
+        if (shouldActivateConfidence >= ACTIVATION_THRESHOLD && !hasAction && millis() - actionTimer > 1000)
         {
             int x = getCenter(x1, x2);
             int y = getCenter(y1, y2);
+
             float pan = 0;
             float tilt = 0;
+
             pixelToServo(x, y, pan, tilt);
 
             panServo.write(pan);
             tiltServo.write(tilt);
 
-            MLOGF("Cat detected, queueing action. Center: %d/%d (x/y), Angles: %d/%d (pan/tilt)\n", x, y, pan, tilt);
+            MLOGF("Cat detected, confidence: %f, Center: %d/%d\n",
+                  shouldActivateConfidence, x, y);
+
             startAction();
             mqtt.sendState(EVENT_ID, events[0]);
         }
@@ -273,6 +303,15 @@ void loop()
     if (!enabled)
     {
         return;
+    }
+
+    if (luxInit && millis() - lastLuxReading > 10000)
+    {
+        float l = veml.readLux(VEML_LUX_AUTO);
+        MLOG("Lux: ");
+        MLOGN(l);
+        mqtt.sendState(LUX_ID, (int) ceil(l));
+        lastLuxReading = millis();
     }
 
     if (hasAction && finishAction && millis() - actionTimer > 500)
