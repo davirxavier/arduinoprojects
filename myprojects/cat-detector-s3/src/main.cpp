@@ -1,6 +1,11 @@
 #include <Arduino.h>
 #include <secrets.h>
 #include <Adafruit_VEML7700.h>
+#include <SD_MMC.h>
+#include <atomic>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 
 #define ENABLE_LOGGING
 #define ESP_CONFIG_PAGE_ENABLE_LOGGING
@@ -25,8 +30,9 @@
 #include <ESP32Servo.h>
 
 #define ACTION_PIN 1
-#define PAN_PIN 19
-#define TILT_PIN 20
+#define LIGHTS_PIN 2
+#define PAN_PIN 20
+#define TILT_PIN 19
 
 #define ENABLED_ID "enabled"
 #define ACTION_TEST_ID "action_test"
@@ -34,33 +40,21 @@
 #define EVENT_ID "events"
 #define LUX_ID "lux-sense"
 #define INFERENCE_ID "inference-model"
+#define LIGHT_MODE_ID "lights"
 
 const char *events[] = {
-    "Detection"
+    "Detection",
+    "Probable Detection"
 };
-size_t eventCount = 1;
-bool enabled = true;
+size_t eventCount = 2;
 
 ESP_CONFIG_PAGE::WEBSERVER_T httpServer(80);
 Mosquetteer mqtt;
-bool mqttBegun = false;
-bool mqttStarted = false;
-
-bool nextPic = true;
-unsigned long pictureDelay = 200;
-unsigned long lastPicture = pictureDelay;
-
-bool hasAction = false;
-unsigned long actionTimer = 0;
-bool finishAction = false;
-
-float smoothedCatConfidence = 0.0f;
-float smoothedHumanConfidence = 0.0f;
-const float SMOOTHING_FACTOR = 0.5f;
 
 Servo tiltServo;
 Servo panServo;
 
+TwoWire LuxWire(0);
 Adafruit_VEML7700 veml = Adafruit_VEML7700();
 bool luxInit = false;
 unsigned long lastLuxReading = 0;
@@ -73,6 +67,31 @@ int getCenter(int v1, int v2)
 constexpr int PAN_REST = 90;
 constexpr int TILT_REST = 180;
 
+bool mqttBegun = false;
+unsigned long pictureDelay = 200;
+
+std::atomic_bool enabled{true};
+std::atomic_bool mqttStarted{false};
+std::atomic_bool nextPic{true};
+std::atomic<uint32_t> lastPicture{200};
+
+std::atomic<float> smoothedCatConfidenceAtomic = 0.0f;
+std::atomic<float> smoothedHumanConfidenceAtomic = 0.0f;
+constexpr float SMOOTHING_FACTOR = 0.5f;
+
+std::atomic_bool hasActionAtomic{false};
+std::atomic<uint32_t> actionTimerAtomic{0};
+esp_timer_handle_t actionTimerHandle = nullptr;
+
+struct DetectionCommand
+{
+    int pan;
+    int tilt;
+    bool activate;
+};
+
+QueueHandle_t detectionQueue = nullptr;
+
 bool isHuman(int classId, double confidence)
 {
     return classId == 1 && confidence >= 0.5;
@@ -83,11 +102,52 @@ bool isCat(int classId, double confidence)
     return classId == 0 && confidence >= 0.6;
 }
 
-void startAction()
+bool startAction()
 {
-    hasAction = true;
-    finishAction = false;
-    actionTimer = millis();
+    if (actionTimerHandle == nullptr)
+    {
+        MLOGN("Action timer is not initialized.");
+        return false;
+    }
+
+    if (hasActionAtomic.load() || esp_timer_is_active(actionTimerHandle))
+    {
+        return false;
+    }
+
+    actionTimerAtomic.store(millis());
+    hasActionAtomic.store(true);
+
+    digitalWrite(ACTION_PIN, HIGH);
+
+    esp_err_t err = esp_timer_start_once(actionTimerHandle, 200000);
+    if (err != ESP_OK)
+    {
+        digitalWrite(ACTION_PIN, LOW);
+        hasActionAtomic.store(false);
+        MLOGF("Failed to start action timer: %d\n", err);
+        return false;
+    }
+
+    return true;
+}
+
+void actionFinished(void* arg)
+{
+    digitalWrite(ACTION_PIN, LOW);
+    actionTimerAtomic.store(millis());
+    hasActionAtomic.store(false);
+}
+
+bool enqueueDetectionCommand(const DetectionCommand& command)
+{
+    if (detectionQueue == nullptr)
+    {
+        MLOGN("Detection queue unavailable.");
+        return false;
+    }
+
+    return xQueueOverwrite(detectionQueue, &command) == pdPASS;
 }
 
 void setup()
@@ -107,19 +167,43 @@ void setup()
     pinMode(ACTION_PIN, OUTPUT);
     digitalWrite(ACTION_PIN, LOW);
 
+    pinMode(LIGHTS_PIN, OUTPUT);
+    digitalWrite(LIGHTS_PIN, LOW);
+
 #ifdef ENABLE_LOGGING
     Serial.begin(115200);
-    delay(5000); // TODO Remove
+    delay(5000);
 #endif
 
-    Wire.begin(47, 21);
-    luxInit = veml.begin(&Wire);
+    detectionQueue = xQueueCreate(1, sizeof(DetectionCommand));
+    if (detectionQueue == nullptr)
+    {
+        MLOGN("Failed to create detection queue!");
+    }
+
+    esp_timer_create_args_t args = {
+        .callback = &actionFinished,
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "actionTimer"
+    };
+
+    esp_err_t timerErr = esp_timer_create(&args, &actionTimerHandle);
+
+    if (timerErr != ESP_OK)
+    {
+        actionTimerHandle = nullptr;
+        MLOGF("Failed to create action timer: %d\n", timerErr);
+    }
+
+    LuxWire.begin(47, 21, 100000);
+    luxInit = veml.begin(&LuxWire);
 
     // MLOGN("Init camera");
     CamConfig::initCamera();
 
     ESP_CONFIG_PAGE::setAPConfig("ESP32-CAT-DETECTOR", "adminadmin");
-    ESP_CONFIG_PAGE::initModules(&httpServer, CONFIG_PAGE_USER, CONFIG_PAGE_PASS, "ESP32-BELL-V2");
+    ESP_CONFIG_PAGE::initModules(&httpServer, CONFIG_PAGE_USER, CONFIG_PAGE_PASS, "ESP32-SOFA-V2");
     httpServer.begin();
 
     mqtt.setClientConfig(MQTT_URL, MQTT_USER, MQTT_PASS);
@@ -129,13 +213,27 @@ void setup()
     mqtt.define(ENABLED_ID, "Enabled", MosquetteerShared::SWITCH);
     mqtt.onCommand(ENABLED_ID, [](const MosquetteerProp &p)
     {
-        enabled = p.isOnState();
+        enabled.store(p.isOnState());
     });
 
     mqtt.define(ACTION_TEST_ID, "Pump", MosquetteerShared::BUTTON);
     mqtt.onCommand(ACTION_TEST_ID, [](const MosquetteerProp &p)
     {
-        startAction();
+        DetectionCommand command{
+            .pan = -1,
+            .tilt = -1,
+            .activate = true
+        };
+
+        enqueueDetectionCommand(command);
+    });
+
+    mqtt.define(LIGHT_MODE_ID, "Lights", MosquetteerShared::SWITCH);
+    mqtt.onCommand(LIGHT_MODE_ID, [](const MosquetteerProp &v)
+    {
+        bool isOn = v.isOnState();
+        digitalWrite(LIGHTS_PIN, isOn ? HIGH : LOW);
+        mqtt.sendState(LIGHT_MODE_ID, isOn);
     });
 
     static constexpr char pictureContentType[] = "image/jpeg";
@@ -161,7 +259,7 @@ void setup()
     mqtt.define(INFERENCE_ID, "Inference", MosquetteerShared::CUSTOM_TOPIC, &customConfig);
     mqtt.onData(INFERENCE_ID, [](const char *data, size_t len)
     {
-        nextPic = true;
+        nextPic.store(true);
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, data, len);
 
@@ -181,8 +279,14 @@ void setup()
         if (doc["abs"])
         {
             JsonArray arr = doc["abs"].as<JsonArray>();
-            panServo.write(arr[0]);
-            tiltServo.write(arr[1]);
+
+            DetectionCommand command{
+                .pan = arr[0],
+                .tilt = arr[1],
+                .activate = false
+            };
+
+            enqueueDetectionCommand(command);
             return;
         }
 
@@ -228,12 +332,20 @@ void setup()
             }
         }
 
-        smoothedCatConfidence = SMOOTHING_FACTOR * catConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedCatConfidence;
-        smoothedHumanConfidence = SMOOTHING_FACTOR * humanConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedHumanConfidence;
+        if (catConfidence > 0.4)
+        {
+            mqtt.sendState(EVENT_ID, events[1]);
+        }
+
+        float smoothedCatConfidence = SMOOTHING_FACTOR * catConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedCatConfidenceAtomic.load();
+        float smoothedHumanConfidence = SMOOTHING_FACTOR * humanConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedHumanConfidenceAtomic.load();
         float shouldActivateConfidence = smoothedCatConfidence * (1.0f - smoothedHumanConfidence);
         constexpr float ACTIVATION_THRESHOLD = 0.6f;
 
-        if (shouldActivateConfidence >= ACTIVATION_THRESHOLD && !hasAction && millis() - actionTimer > 1000)
+        smoothedCatConfidenceAtomic.store(smoothedCatConfidence);
+        smoothedHumanConfidenceAtomic.store(smoothedHumanConfidence);
+
+        if (enabled.load() && x1 != -1 && shouldActivateConfidence >= ACTIVATION_THRESHOLD && !hasActionAtomic.load() && millis() - actionTimerAtomic.load() > 1000)
         {
             int x = getCenter(x1, x2);
             int y = getCenter(y1, y2);
@@ -243,14 +355,14 @@ void setup()
 
             pixelToServo(x, y, pan, tilt);
 
-            panServo.write(pan);
-            tiltServo.write(tilt);
+            DetectionCommand command{
+                .pan = (int)pan,
+                .tilt = (int)tilt,
+                .activate = true
+            };
 
-            MLOGF("Cat detected, confidence: %f, Center: %d/%d\n",
-                  shouldActivateConfidence, x, y);
-
-            startAction();
-            mqtt.sendState(EVENT_ID, events[0]);
+            enqueueDetectionCommand(command);
+            MLOGF("Cat detected, confidence: %f, Center: %d/%d\n", shouldActivateConfidence, x, y);
         }
         else
         {
@@ -262,12 +374,12 @@ void setup()
     {
         if (event == MosquetteerShared::CONNECTED)
         {
-            lastPicture = millis();
-            mqttStarted = true;
+            lastPicture.store(millis());
+            mqttStarted.store(true);
         }
         else
         {
-            mqttStarted = false;
+            mqttStarted.store(false);
         }
     });
 }
@@ -283,26 +395,23 @@ void loop()
         mqttBegun = true;
     }
 
-    if (!hasAction && mqttStarted && millis() - lastPicture > pictureDelay)
+    if (mqttStarted.load() && millis() - lastPicture.load() > pictureDelay)
     {
         MLOGN("Sending picture update.");
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb != nullptr)
         {
             mqtt.sendState(IMAGE_ID, (char*) fb->buf, fb->len);
-            if (enabled && nextPic)
+
+            if (!hasActionAtomic.load() && enabled.load() && nextPic.load())
             {
-                nextPic = false;
+                nextPic.store(false);
                 mqtt.sendState(INFERENCE_ID, (char*) fb->buf, fb->len);
             }
+
             esp_camera_fb_return(fb);
         }
-        lastPicture = millis();
-    }
-
-    if (!enabled)
-    {
-        return;
+        lastPicture.store(millis());
     }
 
     if (luxInit && millis() - lastLuxReading > 10000)
@@ -310,26 +419,41 @@ void loop()
         float l = veml.readLux(VEML_LUX_AUTO);
         MLOG("Lux: ");
         MLOGN(l);
-        mqtt.sendState(LUX_ID, (int) ceil(l));
+        mqtt.sendState(LUX_ID, round(l * 100.0) / 100.0);
         lastLuxReading = millis();
     }
 
-    if (hasAction && finishAction && millis() - actionTimer > 500)
+    if (!enabled.load())
     {
-        MLOGN("Action finished.");
-        digitalWrite(ACTION_PIN, LOW);
-        finishAction = false;
-        hasAction = false;
-        // panServo.write(PAN_REST);
-        // tiltServo.write(TILT_REST);
-        actionTimer = millis();
+        if (detectionQueue != nullptr)
+        {
+            xQueueReset(detectionQueue);
+        }
+
+        return;
     }
 
-    if (hasAction && !finishAction && millis() - actionTimer > 500)
+    DetectionCommand command{};
+    if (detectionQueue != nullptr && xQueueReceive(detectionQueue, &command, 0) == pdTRUE)
     {
-        MLOGN("Aimed, starting action.");
-        digitalWrite(ACTION_PIN, HIGH);
-        finishAction = true;
-        actionTimer = millis();
+        if (command.pan >= 0 && command.pan <= 180)
+        {
+            panServo.write(command.pan);
+        }
+
+        if (command.tilt >= 0 && command.tilt <= 180)
+        {
+            tiltServo.write(command.tilt);
+        }
+
+        if (command.activate)
+        {
+            MLOGN("Aimed, starting action.");
+
+            if (startAction())
+            {
+                mqtt.sendState(EVENT_ID, events[0]);
+            }
+        }
     }
 }
