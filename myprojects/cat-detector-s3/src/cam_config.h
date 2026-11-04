@@ -153,13 +153,26 @@ namespace CamConfig
 
         sensor_t *s = esp_camera_sensor_get();
 
-        // Change bits [5:4] of register 0x303D to 00 (/1) or 10 (/2) so the internal REFIN stays within the required 4–13.5 MHz range for the 8 MHz XVCLK input.
-        s->set_reg(s, 0x303D, 0x30, 0x00);
-        //
+        if (s->set_pll == nullptr)
+        {
+            MLOGN("OV3660 PLL API unavailable");
+            return false;
+        }
+
+        // 8MHz XCLK, valid OV3660 PLL configuration.
+        // Target: 20MHz SYSCLK, 4MHz PCLK.
+        int pllErr = s->set_pll(s, 0, 30, 3, 0, 0, 0, 1, 10);
+
+        if (pllErr != 0)
+        {
+            MLOGF("PLL configuration failed: %d\n", pllErr);
+            return false;
+        }
 
         s->set_denoise(s, 8);
         s->set_vflip(s, 1);
-        s->set_sharpness(s, 3);
+        s->set_sharpness(s, 0);
+        // s->set_aec2(s, 1);
 
         camera_fb_t *fb = esp_camera_fb_get();
         delay(100);

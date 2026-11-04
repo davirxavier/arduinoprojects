@@ -34,6 +34,8 @@
 #define PAN_PIN 20
 #define TILT_PIN 19
 
+#define Y_IGNORE_PX_THRESHOLD 640
+
 #define ENABLED_ID "enabled"
 #define ACTION_TEST_ID "action_test"
 #define IMAGE_ID "picture"
@@ -73,6 +75,7 @@ unsigned long pictureDelay = 200;
 std::atomic_bool enabled{true};
 std::atomic_bool mqttStarted{false};
 std::atomic_bool nextPic{true};
+std::atomic<uint32_t> inferenceRequestAt{0};
 std::atomic<uint32_t> lastPicture{200};
 
 std::atomic<float> smoothedCatConfidenceAtomic = 0.0f;
@@ -314,21 +317,29 @@ void setup()
                   getCenter(localX1, localX2),
                   getCenter(localY1, localY2));
 
-            if (isCat(classId, confidence))
+            if (isCat(classId, confidence) && confidence > catConfidence)
             {
-                catConfidence = max(catConfidence, confidence);
-
-                if (x1 == -1)
-                {
-                    x1 = localX1;
-                    x2 = localX2;
-                    y1 = localY1;
-                    y2 = localY2;
-                }
+                catConfidence = confidence;
+                x1 = localX1;
+                x2 = localX2;
+                y1 = localY1;
+                y2 = localY2;
             }
             else if (isHuman(classId, confidence))
             {
                 humanConfidence = max(humanConfidence, confidence);
+            }
+        }
+
+        if (x1 != -1)
+        {
+            int centerY = getCenter(y1, y2);
+
+            if (centerY > Y_IGNORE_PX_THRESHOLD)
+            {
+                MLOGF("Ignoring selected cat. Center Y: %d\n", centerY);
+                catConfidence = 0.0f;
+                x1 = -1;
             }
         }
 
@@ -395,6 +406,12 @@ void loop()
         mqttBegun = true;
     }
 
+    if (!nextPic.load() && millis() - inferenceRequestAt.load() > 2000)
+    {
+        MLOGN("Inference timeout. Re-enabling next picture.");
+        nextPic.store(true);
+    }
+
     if (mqttStarted.load() && millis() - lastPicture.load() > pictureDelay)
     {
         MLOGN("Sending picture update.");
@@ -405,8 +422,9 @@ void loop()
 
             if (!hasActionAtomic.load() && enabled.load() && nextPic.load())
             {
+                inferenceRequestAt.store(millis());
                 nextPic.store(false);
-                mqtt.sendState(INFERENCE_ID, (char*) fb->buf, fb->len);
+                mqtt.sendState(INFERENCE_ID, (char*)fb->buf, fb->len);
             }
 
             esp_camera_fb_return(fb);
