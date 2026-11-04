@@ -44,11 +44,32 @@
 #define INFERENCE_ID "inference-model"
 #define LIGHT_MODE_ID "lights"
 
-const char *events[] = {
-    "Detection",
-    "Probable Detection"
+enum EventType
+{
+    EVENT_DETECTION,
+    EVENT_PROBABLE_DETECTION,
+    EVENT_INFERENCE_TIMEOUT,
+    EVENT_INFERENCE_JSON_ERROR,
+    EVENT_INFERENCE_FAILED,
+    EVENT_CAMERA_ERROR,
+    EVENT_QUEUE_ERROR,
+    EVENT_ACTION_TIMER_ERROR,
+    EVENT_COUNT
 };
-size_t eventCount = 2;
+
+const char *eventsNames[] = {
+    "Detection",
+    "Probable Detection",
+    "Error: Inference Timeout",
+    "Error: Invalid Inference JSON",
+    "Error: Inference Failed",
+    "Error: Camera Capture",
+    "Error: Detection Queue",
+    "Error: Action Timer"
+};
+
+size_t eventCount = EVENT_COUNT;
+bool cameraErrorReported = false;
 
 ESP_CONFIG_PAGE::WEBSERVER_T httpServer(80);
 Mosquetteer mqtt;
@@ -95,6 +116,11 @@ struct DetectionCommand
 
 QueueHandle_t detectionQueue = nullptr;
 
+void sendEvent(EventType event)
+{
+    mqtt.sendState(EVENT_ID, eventsNames[event]);
+}
+
 bool isHuman(int classId, double confidence)
 {
     return classId == 1 && confidence >= 0.5;
@@ -109,6 +135,7 @@ bool startAction()
 {
     if (actionTimerHandle == nullptr)
     {
+        sendEvent(EVENT_ACTION_TIMER_ERROR);
         MLOGN("Action timer is not initialized.");
         return false;
     }
@@ -128,6 +155,7 @@ bool startAction()
     {
         digitalWrite(ACTION_PIN, LOW);
         hasActionAtomic.store(false);
+        sendEvent(EVENT_ACTION_TIMER_ERROR);
         MLOGF("Failed to start action timer: %d\n", err);
         return false;
     }
@@ -146,11 +174,18 @@ bool enqueueDetectionCommand(const DetectionCommand& command)
 {
     if (detectionQueue == nullptr)
     {
+        sendEvent(EVENT_QUEUE_ERROR);
         MLOGN("Detection queue unavailable.");
         return false;
     }
 
-    return xQueueOverwrite(detectionQueue, &command) == pdPASS;
+    if (xQueueOverwrite(detectionQueue, &command) != pdPASS)
+    {
+        sendEvent(EVENT_QUEUE_ERROR);
+        return false;
+    }
+
+    return true;
 }
 
 void setup()
@@ -245,7 +280,7 @@ void setup()
     mqtt.define(IMAGE_ID, "Picture", MosquetteerShared::IMAGE, &imageConfig);
 
     MosquetteerShared::EventConfig eventConfig{};
-    eventConfig.eventTypes = events;
+    eventConfig.eventTypes = eventsNames;
     eventConfig.eventTypeCount = eventCount;
     mqtt.define(EVENT_ID, "Events", MosquetteerShared::EVENT, &eventConfig);
 
@@ -268,6 +303,7 @@ void setup()
 
         if (err != DeserializationError::Ok)
         {
+            sendEvent(EVENT_INFERENCE_JSON_ERROR);
             MLOGF("Error reading inference json: %.*s\n", len, data);
             return;
         }
@@ -275,6 +311,7 @@ void setup()
         bool success = doc["success"];
         if (!success)
         {
+            sendEvent(EVENT_INFERENCE_FAILED);
             MLOGN("Inference error, check logs.");
             return;
         }
@@ -345,7 +382,7 @@ void setup()
 
         if (catConfidence > 0.4)
         {
-            mqtt.sendState(EVENT_ID, events[1]);
+            sendEvent(EVENT_PROBABLE_DETECTION);
         }
 
         float smoothedCatConfidence = SMOOTHING_FACTOR * catConfidence + (1.0f - SMOOTHING_FACTOR) * smoothedCatConfidenceAtomic.load();
@@ -409,6 +446,7 @@ void loop()
     if (!nextPic.load() && millis() - inferenceRequestAt.load() > 2000)
     {
         MLOGN("Inference timeout. Re-enabling next picture.");
+        sendEvent(EVENT_INFERENCE_TIMEOUT);
         nextPic.store(true);
     }
 
@@ -428,6 +466,13 @@ void loop()
             }
 
             esp_camera_fb_return(fb);
+            cameraErrorReported = false;
+        }
+        else if (!cameraErrorReported)
+        {
+            sendEvent(EVENT_CAMERA_ERROR);
+            cameraErrorReported = true;
+            MLOGN("Camera capture failed.");
         }
         lastPicture.store(millis());
     }
@@ -470,7 +515,7 @@ void loop()
 
             if (startAction())
             {
-                mqtt.sendState(EVENT_ID, events[0]);
+                sendEvent(EVENT_DETECTION);
             }
         }
     }
